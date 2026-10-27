@@ -275,7 +275,6 @@
   function startSending() {
     if (sendLoop) clearInterval(sendLoop);
     sendLoop = setInterval(async () => {
-      // Check readiness directly on the native WebSocket
       if (!client || !client.ws || client.ws.readyState !== WebSocket.OPEN || !stream) return;
       if (Date.now() - lastFrameAt < 200) return;
       lastFrameAt = Date.now();
@@ -339,7 +338,6 @@
 
   btnSave.addEventListener("click", () => {
     if (!pendingB64) return;
-    // Check native WebSocket state instead of non-existent library properties
     if (!client || !client.ws || client.ws.readyState !== WebSocket.OPEN) {
       toast("Not connected to server. Please wait...", "err");
       return;
@@ -357,11 +355,20 @@
   $("#btn-cam").addEventListener("click", () => stream ? stopCamera() : startCamera());
   $("#btn-end").addEventListener("click", () => { stopCamera(); toast("Call ended"); });
   
+  // Fixed fullscreen for iOS/Android
   $("#btn-fullscreen").addEventListener("click", () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => toast("Fullscreen blocked", "err"));
+    const el = document.documentElement;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen;
+    
+    if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+      if (req) {
+        req.call(el).catch(() => toast("Fullscreen blocked", "err"));
+      } else {
+        toast("Fullscreen not supported on this browser", "err");
+      }
     } else {
-      document.exitFullscreen();
+      const exit = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen || document.msExitFullscreen;
+      if (exit) exit.call(document);
     }
   });
 
@@ -370,7 +377,6 @@
     const proto = location.protocol === "https:" ? "wss" : "ws";
     client = new LynkClient(`${proto}://${location.host}`);
 
-    // The library parses JSON internally and passes only `data` to these handlers
     client.on("ready", (d) => {
       faces = d.faces || [];
       activeFace = d.active || null;
@@ -411,7 +417,6 @@
       output.src = url; output.style.display = "block"; stageEmpty.style.display = "none";
     });
 
-    // The library handles auto-reconnect internally. We just kick it off once.
     client.connect().catch(err => {
       console.warn("Initial connection failed, LynkClient will auto-retry:", err);
     });
@@ -425,7 +430,6 @@
     else updateConnUI("disconnected");
   }, 1000);
 
-  // Boot
   initClient();
 })();
 </script>
