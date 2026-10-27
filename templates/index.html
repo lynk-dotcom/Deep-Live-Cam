@@ -20,10 +20,10 @@
   #stage .empty .icon { font-size: 64px; opacity: .3; }
   #stage .empty .label { font-size: 14px; letter-spacing: .3px; }
 
-  /* PiP */
-  #pip { position: fixed; bottom: 140px; right: 20px; width: 130px; height: 175px; border-radius: var(--radius); overflow: hidden; z-index: 15; border: 2px solid rgba(255,255,255,.22); box-shadow: 0 8px 32px rgba(0,0,0,.6); background: #000; transition: transform .2s; }
-  #pip video { width: 100%; height: 100%; object-fit: cover; }
-  #pip.hidden { display: none; }
+  /* PiP (Draggable) */
+  #pip { position: fixed; bottom: 140px; right: 20px; width: 130px; height: 175px; border-radius: var(--radius); overflow: hidden; z-index: 15; border: 2px solid rgba(255,255,255,.22); box-shadow: 0 8px 32px rgba(0,0,0,.6); background: #000; cursor: grab; touch-action: none; }
+  #pip:active { cursor: grabbing; }
+  #pip video { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
 
   /* TOP BAR */
   #topbar { position: fixed; top: 0; left: 0; right: 0; z-index: 20; padding: 16px 24px; background: linear-gradient(180deg, rgba(0,0,0,.8), transparent); display: flex; justify-content: space-between; align-items: center; pointer-events: none; }
@@ -38,8 +38,9 @@
 
   /* CONTROLS */
   #controls { position: fixed; bottom: 0; left: 0; right: 0; z-index: 20; padding: 20px 20px 32px; background: linear-gradient(0deg, rgba(0,0,0,.92), transparent); display: flex; justify-content: center; align-items: center; gap: 22px; }
-  .ctrl { width: 62px; height: 62px; border-radius: 50%; background: rgba(255,255,255,.15); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,.15); color: #fff; font-size: 26px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all .15s; }
-  .ctrl:hover { background: rgba(255,255,255,.25); transform: translateY(-2px); }
+  .ctrl { width: 62px; height: 62px; border-radius: 50%; background: rgba(255,255,255,.15); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,.15); color: #fff; font-size: 26px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: transform .1s, background .15s; }
+  .ctrl:active { transform: scale(0.9); }
+  .ctrl:hover { background: rgba(255,255,255,.25); }
   .ctrl.primary { background: var(--accent); }
   .ctrl.danger { background: var(--danger); }
   .ctrl.danger:hover { background: #ff1744; box-shadow: 0 0 24px rgba(255,59,48,.6); }
@@ -53,10 +54,12 @@
   .sheet-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
   .sheet-title { font-size: 20px; font-weight: 700; }
   .close { width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,.1); border: none; color: #fff; font-size: 20px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .close:active { transform: scale(0.9); }
 
   /* FACE GRID */
   .face-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 10px; margin-bottom: 16px; }
   .face-item { aspect-ratio: 1; border-radius: 12px; overflow: hidden; border: 2px solid transparent; cursor: pointer; background: #12161d; position: relative; transition: border-color .15s; }
+  .face-item:active { transform: scale(0.95); }
   .face-item:hover { border-color: var(--accent); }
   .face-item.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
   .face-item img { width: 100%; height: 100%; object-fit: cover; }
@@ -72,7 +75,8 @@
   .file-drop:hover { border-color: var(--accent); }
   .file-drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
   .file-drop img { max-height: 140px; border-radius: 8px; margin-top: 8px; display: none; }
-  .btn { padding: 12px; border-radius: 8px; border: none; font-weight: 600; font-size: 14px; cursor: pointer; background: var(--accent); color: #fff; }
+  .btn { padding: 12px; border-radius: 8px; border: none; font-weight: 600; font-size: 14px; cursor: pointer; background: var(--accent); color: #fff; transition: transform .1s, opacity .15s; }
+  .btn:active { transform: scale(0.96); }
   .btn:disabled { opacity: .5; cursor: not-allowed; }
 
   /* TOAST */
@@ -103,6 +107,7 @@
   </div>
 </div>
 
+<!-- Draggable PiP -->
 <div id="pip">
   <video id="selfie" autoplay playsinline muted></video>
 </div>
@@ -123,6 +128,7 @@
   <button class="ctrl primary" id="btn-cam" title="Start camera">
     <svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
   </button>
+  <button class="ctrl" id="btn-fullscreen" title="Fullscreen">⛶</button>
   <button class="ctrl danger" id="btn-end" title="End call">📴</button>
 </div>
 
@@ -153,14 +159,76 @@
   "use strict";
   const $ = (s) => document.querySelector(s);
   const output = $("#output"), stageEmpty = $("#stage-empty"), selfie = $("#selfie"), timerEl = $("#timer"), faceGrid = $("#face-grid"), toastEl = $("#toast");
+  const pip = $("#pip");
 
-  let client = null, stream = null, sendLoop = null, timerStart = null, lastFrameAt = 0, activeFace = null, faces = [];
+  let client = null;
+  let stream = null;
+  let sendLoop = null;
+  let timerStart = null;
+  let lastFrameAt = 0;
+  let activeFace = null;
+  let faces = [];
+  let pendingB64 = null;
+
+  // Connection State Flags
+  let isConnected = false;
+  let isConnecting = false;
+  let reconnectTimer = null;
 
   function toast(msg, kind = "") {
     toastEl.textContent = msg; toastEl.className = "show " + kind;
     clearTimeout(toast._t); toast._t = setTimeout(() => toastEl.classList.remove("show"), 2500);
   }
 
+  // ---- DRAGGABLE PiP ----
+  let isDragging = false, dragStartX, dragStartY, initialRight, initialBottom;
+  
+  pip.addEventListener('mousedown', dragStart);
+  pip.addEventListener('touchstart', dragStart, {passive: true});
+
+  function dragStart(e) {
+    if (e.target.tagName === 'BUTTON') return;
+    const evt = e.touches ? e.touches[0] : e;
+    dragStartX = evt.clientX;
+    dragStartY = evt.clientY;
+    const rect = pip.getBoundingClientRect();
+    initialRight = window.innerWidth - rect.right;
+    initialBottom = window.innerHeight - rect.bottom;
+
+    document.addEventListener('mousemove', dragMove);
+    document.addEventListener('touchmove', dragMove, {passive: false});
+    document.addEventListener('mouseup', dragEnd);
+    document.addEventListener('touchend', dragEnd);
+    isDragging = true;
+  }
+
+  function dragMove(e) {
+    if (!isDragging) return;
+    if (e.cancelable) e.preventDefault();
+    const evt = e.touches ? e.touches[0] : e;
+    const dx = dragStartX - evt.clientX;
+    const dy = dragStartY - evt.clientY;
+
+    let newRight = initialRight + dx;
+    let newBottom = initialBottom + dy;
+
+    // Constrain to viewport
+    newRight = Math.max(10, Math.min(window.innerWidth - pip.offsetWidth - 10, newRight));
+    newBottom = Math.max(80, Math.min(window.innerHeight - pip.offsetHeight - 80, newBottom));
+
+    pip.style.right = newRight + 'px';
+    pip.style.bottom = newBottom + 'px';
+  }
+
+  function dragEnd() {
+    isDragging = false;
+    document.removeEventListener('mousemove', dragMove);
+    document.removeEventListener('touchmove', dragMove);
+    document.removeEventListener('mouseup', dragEnd);
+    document.removeEventListener('touchend', dragEnd);
+  }
+
+  // ---- TIMER ----
   setInterval(() => {
     if (!stream) { timerEl.textContent = "00:00"; return; }
     if (!timerStart) timerStart = Date.now();
@@ -204,7 +272,7 @@
   function startSending() {
     if (sendLoop) clearInterval(sendLoop);
     sendLoop = setInterval(async () => {
-      if (!client || !client.connected || !stream) return;
+      if (!isConnected || !stream) return;
       if (Date.now() - lastFrameAt < 200) return;
       lastFrameAt = Date.now();
       const frame = await captureFrame();
@@ -238,9 +306,9 @@
     });
   }
 
-  // ---- UPLOAD ----
+  // ---- UPLOAD & SAVE ----
   const fileInput = $("#face-file"), preview = $("#face-preview");
-  let pendingB64 = null;
+  const btnSave = $("#btn-save-face");
 
   fileInput.addEventListener("change", () => {
     const f = fileInput.files[0];
@@ -249,7 +317,6 @@
     reader.onload = (e) => {
       const img = new Image();
       img.onload = () => {
-        // Compress to max 640px before base64 encoding
         const c = document.createElement("canvas");
         let w = img.width, h = img.height;
         if (w > 640) { h = Math.round(h * (640 / w)); w = 640; }
@@ -267,13 +334,19 @@
   });
 
   $("#face-name").addEventListener("input", validateSave);
-  function validateSave() { $("#btn-save-face").disabled = !pendingB64 || !$("#face-name").value.trim(); }
+  function validateSave() { btnSave.disabled = !pendingB64 || !$("#face-name").value.trim(); }
 
-  $("#btn-save-face").addEventListener("click", () => {
-    if (!pendingB64 || !client || !client.connected) return;
-    $("#btn-save-face").disabled = true;
-    $("#btn-save-face").textContent = "Saving...";
-    client.emit("save_face", { name: $("#face-name").value.trim(), image: pendingB64 });
+  btnSave.addEventListener("click", () => {
+    if (!pendingB64) return;
+    btnSave.disabled = true;
+    btnSave.textContent = "Saving...";
+    if (isConnected) {
+      client.emit("save_face", { name: $("#face-name").value.trim(), image: pendingB64 });
+    } else {
+      toast("Not connected to server", "err");
+      btnSave.disabled = false;
+      btnSave.textContent = "Save to library";
+    }
   });
 
   // ---- CONTROLS ----
@@ -283,24 +356,56 @@
 
   $("#btn-cam").addEventListener("click", () => stream ? stopCamera() : startCamera());
   $("#btn-end").addEventListener("click", () => { stopCamera(); toast("Call ended"); });
+  
+  $("#btn-fullscreen").addEventListener("click", () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => toast("Fullscreen blocked", "err"));
+    } else {
+      document.exitFullscreen();
+    }
+  });
 
-  // ---- LYNCIO ----
-  async function connect() {
+  // ---- LYNCIO LIFECYCLE (Fixed Reconnection) ----
+  function initClient() {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     client = new LynkClient(`${proto}://${location.host}`);
 
-    client.on("ready", (d) => { faces = d.faces || []; activeFace = d.active || null; renderFaces(); });
+    client.on("open", () => {
+      console.log("[WS] Connected");
+      isConnected = true;
+      isConnecting = false;
+      clearTimeout(reconnectTimer);
+    });
+
+    client.on("close", () => {
+      console.log("[WS] Disconnected");
+      isConnected = false;
+      isConnecting = false;
+      if (!reconnectTimer) reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, 3000);
+    });
+
+    client.on("ready", (d) => {
+      faces = d.faces || [];
+      activeFace = d.active || null;
+      renderFaces();
+    });
+
     client.on("face_saved", (d) => {
       faces = d.faces || []; activeFace = d.name; renderFaces();
       $("#face-name").value = ""; fileInput.value = ""; pendingB64 = null;
       preview.style.display = "none"; validateSave();
-      $("#btn-save-face").disabled = false; $("#btn-save-face").textContent = "Save to library";
+      btnSave.disabled = false; btnSave.textContent = "Save to library";
       toast(`Saved "${d.name}"`, "ok");
       $("#face-modal").classList.remove("open");
     });
+
     client.on("face_changed", (d) => { activeFace = d.name; renderFaces(); toast(`Active: ${d.name}`, "ok"); });
     client.on("face_deleted", (d) => { faces = d.faces || []; activeFace = d.active || null; renderFaces(); });
-    client.on("error", (msg) => { toast(String(msg), "err"); $("#btn-save-face").disabled = false; $("#btn-save-face").textContent = "Save to library"; });
+    
+    client.on("error", (msg) => {
+      toast(String(msg), "err");
+      btnSave.disabled = false; btnSave.textContent = "Save to library";
+    });
 
     client.onBinaryEvent("out", (payload) => {
       const blob = new Blob([payload], { type: "image/jpeg" });
@@ -309,13 +414,22 @@
       output.src = url; output.style.display = "block"; stageEmpty.style.display = "none";
     });
 
-    try { await client.connect(); } catch (e) { setTimeout(connect, 3000); }
+    connect();
   }
 
-  window.addEventListener("online", connect);
-  setInterval(() => { if (client && !client.connected) connect(); }, 5000);
+  async function connect() {
+    if (isConnected || isConnecting) return;
+    isConnecting = true;
+    try {
+      await client.connect();
+    } catch (e) {
+      isConnecting = false;
+      if (!reconnectTimer) reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, 3000);
+    }
+  }
 
-  (async () => { await connect(); })();
+  // Boot
+  initClient();
 })();
 </script>
 </body>
