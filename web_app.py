@@ -246,7 +246,7 @@ async def ws_frame(client, payload: bytes):
 
 
 @app.on_internal("connect")
-async def on_connect(client):
+async def on_connect(client, _):
     print(f"[DLC] client connected: {client.id}", flush=True)
     await client.send({
         "event": "ready",
