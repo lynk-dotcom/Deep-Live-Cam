@@ -1,5 +1,6 @@
 """
 Deep-Live-Cam × Lynkio 1.3.1 — WebSocket binary streaming server.
+Memory-Optimized for 2GB RAM (Railway/Render)
 """
 import os, sys, types, base64, re, json, asyncio, time
 from pathlib import Path
@@ -10,6 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 os.environ.setdefault("INSIGHTFACE_HOME", str(ROOT / "models" / "insightface"))
 os.environ.setdefault("HOME", str(ROOT / "models"))
+os.environ.setdefault("OMP_NUM_THREADS", "1") # Prevent ONNX from spawning too many threads
 (ROOT / "models").mkdir(exist_ok=True)
 (ROOT / "faces").mkdir(exist_ok=True)
 
@@ -33,6 +35,15 @@ sys.path.insert(0, str(ROOT))
 os.environ["PATH"] = str(ROOT) + os.pathsep + os.environ.get("PATH", "")
 
 import cv2, numpy as np
+
+# Monkeypatch InsightFace to use a smaller detection size (Saves ~300MB RAM)
+import insightface
+_orig_init = insightface.app.FaceAnalysis.__init__
+def _patched_init(self, *args, **kwargs):
+    _orig_init(self, *args, **kwargs)
+    self.prepare(ctx_id=-1, det_size=(320, 320))
+insightface.app.FaceAnalysis.__init__ = _patched_init
+
 from download import download_models
 download_models()
 
@@ -50,6 +61,7 @@ from modules.processors.frame.core import get_frame_processors_modules
 # Preflight
 # ===========================================================================
 try:
+    # ONLY load face_swapper to save RAM
     _processors = get_frame_processors_modules(["face_swapper"])
     print(f"[DLC] preflight OK — {len(_processors)} processor(s)", flush=True)
 except BaseException as e:
@@ -61,9 +73,9 @@ except BaseException as e:
 # Tunables
 # ===========================================================================
 TARGET_FPS   = float(os.environ.get("TARGET_FPS", "5"))
-MAX_W        = int(os.environ.get("MAX_WIDTH",  "384")) # Reduced for Railway stability
+MAX_W        = int(os.environ.get("MAX_WIDTH",  "384"))
 MAX_H        = int(os.environ.get("MAX_HEIGHT", "288"))
-JPEG_QUALITY = int(os.environ.get("JPEG_QUALITY", "75"))
+JPEG_QUALITY = int(os.environ.get("JPEG_QUALITY", "70")) # Lower quality = less RAM
 
 # ===========================================================================
 # State
@@ -100,9 +112,9 @@ def _load_face(name: str):
     if bgr is None: return False
     
     h, w = bgr.shape[:2]
-    if w > 1080:
-        s = 1080 / w
-        bgr = cv2.resize(bgr, (1080, int(h * s)), interpolation=cv2.INTER_AREA)
+    if w > 720:
+        s = 720 / w
+        bgr = cv2.resize(bgr, (720, int(h * s)), interpolation=cv2.INTER_AREA)
         
     face = get_one_face(bgr)
     if face is None: 
@@ -112,12 +124,11 @@ def _load_face(name: str):
     _active["face"] = face
     _active["name"] = name
     modules.globals.source_path = str(path)
-    modules.globals.frame_processors = ["face_swapper"]
+    modules.globals.frame_processors = ["face_swapper"] # Override config to force only swapper
     _last["jpeg"] = None
     print(f"[DLC] SUCCESS: Loaded source face '{name}'", flush=True)
     return True
 
-# Helper to run heavy CPU inference without blocking async loop
 def _process_frame_sync(bgr, face):
     for p in _processors:
         bgr = p.process_frame(face, bgr)
@@ -138,7 +149,6 @@ app = Lynk(
     debug=False,
 )
 
-app.static("/static", str(ROOT / "static"))
 app.static("/faces", str(ROOT / "faces"))
 
 @app.get("/")
@@ -177,7 +187,7 @@ async def ws_save_face(client, data):
         cv2.imwrite(str(ROOT / "faces" / f"{name}.jpg"), bgr)
         
         if not _load_face(name):
-            return await client.send(json.dumps({"event": "error", "data": "Saved, but no face detected. Try a clearer photo."}))
+            return await client.send(json.dumps({"event": "error", "data": "Saved, but no face detected."}))
         
         await client.send(json.dumps({
             "event": "face_saved",
@@ -232,8 +242,6 @@ async def ws_frame(client, payload: bytes):
                 return
             
             bgr = _resize(bgr)
-            
-            # Run ONNX inference in a separate thread so it doesn't block the async loop!
             out_bgr = await asyncio.to_thread(_process_frame_sync, bgr, _active["face"])
                 
             out = _encode_jpeg(out_bgr)
