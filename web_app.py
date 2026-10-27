@@ -1,233 +1,436 @@
-"""
-Deep-Live-Cam × Lynkio 1.3.1 — WebSocket binary streaming server.
-"""
-import os, sys, types, base64, re, json, asyncio, time
-from pathlib import Path
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b141a">
+<title>{{ title }}</title>
+<style>
+  :root {
+    --bg: #0b141a; --panel: #111b21; --accent: #00a884;
+    --text: #e9edef; --dim: #8696a0; --danger: #ff3b30; --radius: 16px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
 
-# ===========================================================================
-# Model persistence — before any insightface import
-# ===========================================================================
-ROOT = Path(__file__).resolve().parent
-os.environ.setdefault("INSIGHTFACE_HOME", str(ROOT / "models" / "insightface"))
-os.environ.setdefault("HOME", str(ROOT / "models"))
-(ROOT / "models").mkdir(exist_ok=True)
-(ROOT / "faces").mkdir(exist_ok=True)
+  /* STAGE */
+  #stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at center, #1a1f2e 0%, #050810 100%); z-index: 1; }
+  #output { max-width: 100%; max-height: 100%; object-fit: contain; display: none; }
+  #stage .empty { text-align: center; color: var(--dim); display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  #stage .empty .icon { font-size: 64px; opacity: .3; }
+  #stage .empty .label { font-size: 14px; letter-spacing: .3px; }
 
-# ===========================================================================
-# Headless stub for modules.ui — prevents PySide6 / libEGL import
-# ===========================================================================
-def _install_ui_stub():
-    stub = types.ModuleType("modules.ui")
-    def _noop(*_a, **_k): return None
-    for n in ("update_status","init","destroy","close","create_analyser",
-              "register_analyser","register_frame_processor","set_frame_processor",
-              "start","start_preview","stop_preview","init_preview",
-              "update_preview","update_tk_image","update_frame"):
-        setattr(stub, n, _noop)
-    stub.__dict__["__getattr__"] = lambda _n: _noop
-    stub.UI_AVAILABLE = False
-    sys.modules["modules.ui"] = stub
-_install_ui_stub()
+  /* PiP (Draggable) */
+  #pip { position: fixed; bottom: 140px; right: 20px; width: 130px; height: 175px; border-radius: var(--radius); overflow: hidden; z-index: 15; border: 2px solid rgba(255,255,255,.22); box-shadow: 0 8px 32px rgba(0,0,0,.6); background: #000; cursor: grab; touch-action: none; }
+  #pip:active { cursor: grabbing; }
+  #pip video { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
 
-sys.path.insert(0, str(ROOT))
-os.environ["PATH"] = str(ROOT) + os.pathsep + os.environ.get("PATH", "")
+  /* TOP BAR */
+  #topbar { position: fixed; top: 0; left: 0; right: 0; z-index: 20; padding: 16px 24px; background: linear-gradient(180deg, rgba(0,0,0,.8), transparent); display: flex; justify-content: space-between; align-items: center; pointer-events: none; }
+  #topbar * { pointer-events: auto; }
+  .caller { display: flex; align-items: center; gap: 12px; }
+  .avatar { width: 42px; height: 42px; border-radius: 50%; background: linear-gradient(135deg, #00a884, #128c7e); display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 700; color: #fff; box-shadow: 0 4px 12px rgba(0,168,132,.4); }
+  .caller-name { font-size: 16px; font-weight: 600; }
+  .caller-status { font-size: 12px; color: rgba(255,255,255,.72); display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: #25d366; box-shadow: 0 0 8px #25d366; animation: pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+  .timer { font-family: "SF Mono", "JetBrains Mono", monospace; font-size: 13px; color: rgba(255,255,255,.9); background: rgba(0,0,0,.45); padding: 6px 12px; border-radius: 20px; backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,.12); }
 
-import cv2, numpy as np
-from download import download_models
-download_models()
+  /* CONTROLS */
+  #controls { position: fixed; bottom: 0; left: 0; right: 0; z-index: 20; padding: 20px 20px 32px; background: linear-gradient(0deg, rgba(0,0,0,.92), transparent); display: flex; justify-content: center; align-items: center; gap: 22px; }
+  .ctrl { width: 62px; height: 62px; border-radius: 50%; background: rgba(255,255,255,.15); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,.15); color: #fff; font-size: 26px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: transform .1s, background .15s; }
+  .ctrl:active { transform: scale(0.9); }
+  .ctrl:hover { background: rgba(255,255,255,.25); }
+  .ctrl.primary { background: var(--accent); }
+  .ctrl.danger { background: var(--danger); }
+  .ctrl.danger:hover { background: #ff1744; box-shadow: 0 0 24px rgba(255,59,48,.6); }
+  .ctrl svg { width: 26px; height: 26px; fill: currentColor; }
 
-import modules.globals
-_p = os.environ.get("EXECUTION_PROVIDER", "cpu").lower()
-modules.globals.execution_providers = {
-    "cuda":   ["CUDAExecutionProvider", "CPUExecutionProvider"],
-    "coreml": ["CoreMLExecutionProvider", "CPUExecutionProvider"],
-}.get(_p, ["CPUExecutionProvider"])
+  /* MODAL */
+  .modal { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.85); backdrop-filter: blur(12px); display: none; align-items: flex-end; justify-content: center; }
+  .modal.open { display: flex; }
+  .sheet { background: #1a1f2e; border-radius: 24px 24px 0 0; padding: 20px; width: 100%; max-width: 640px; max-height: 82vh; overflow-y: auto; animation: slideUp .3s ease; }
+  @keyframes slideUp { from { transform: translateY(100%) } to { transform: translateY(0) } }
+  .sheet-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+  .sheet-title { font-size: 20px; font-weight: 700; }
+  .close { width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,.1); border: none; color: #fff; font-size: 20px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .close:active { transform: scale(0.9); }
 
-from modules.face_analyser import get_one_face
-from modules.processors.frame.core import get_frame_processors_modules
+  /* FACE GRID */
+  .face-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .face-item { aspect-ratio: 1; border-radius: 12px; overflow: hidden; border: 2px solid transparent; cursor: pointer; background: #12161d; position: relative; transition: border-color .15s; }
+  .face-item:active { transform: scale(0.95); }
+  .face-item:hover { border-color: var(--accent); }
+  .face-item.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+  .face-item img { width: 100%; height: 100%; object-fit: cover; }
+  .face-item .name { position: absolute; bottom: 0; left: 0; right: 0; padding: 4px 6px; font-size: 10px; text-align: center; background: linear-gradient(0deg, rgba(0,0,0,.85), transparent); color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .face-item .del { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border-radius: 50%; background: rgba(255,59,48,.9); border: none; color: #fff; font-size: 12px; cursor: pointer; display: none; align-items: center; justify-content: center; }
+  .face-item:hover .del { display: flex; }
 
-# ===========================================================================
-# Preflight
-# ===========================================================================
-try:
-    _processors = get_frame_processors_modules(["face_swapper"])
-    print(f"[DLC] preflight OK — {len(_processors)} processor(s)", flush=True)
-except BaseException as e:
-    import traceback; traceback.print_exc()
-    print(f"[DLC] FATAL: {e!r}", flush=True)
-    sys.exit(1)
+  /* ADD FORM */
+  .add-form { display: flex; flex-direction: column; gap: 10px; }
+  .add-form input[type="text"] { background: #0b141a; border: 1px solid #2a3942; border-radius: 8px; padding: 12px; color: var(--text); font-size: 14px; outline: none; }
+  .add-form input[type="text"]:focus { border-color: var(--accent); }
+  .file-drop { border: 2px dashed #2a3942; border-radius: 12px; padding: 20px; text-align: center; color: var(--dim); cursor: pointer; transition: border-color .15s; position: relative; overflow: hidden; }
+  .file-drop:hover { border-color: var(--accent); }
+  .file-drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .file-drop img { max-height: 140px; border-radius: 8px; margin-top: 8px; display: none; }
+  .btn { padding: 12px; border-radius: 8px; border: none; font-weight: 600; font-size: 14px; cursor: pointer; background: var(--accent); color: #fff; transition: transform .1s, opacity .15s; }
+  .btn:active { transform: scale(0.96); }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
 
-# ===========================================================================
-# Tunables
-# ===========================================================================
-TARGET_FPS   = float(os.environ.get("TARGET_FPS", "5"))
-MAX_W        = int(os.environ.get("MAX_WIDTH",  "480"))
-MAX_H        = int(os.environ.get("MAX_HEIGHT", "360"))
-JPEG_QUALITY = int(os.environ.get("JPEG_QUALITY", "75"))
+  /* TOAST */
+  #toast { position: fixed; top: 80px; left: 50%; transform: translateX(-50%) translateY(-20px); background: #1a1f2e; border: 1px solid #2a3942; border-radius: 10px; padding: 10px 16px; font-size: 13px; z-index: 200; opacity: 0; transition: all .25s; pointer-events: none; }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #toast.ok { border-color: var(--accent); color: #25d366; }
+  #toast.err { border-color: var(--danger); color: #f87171; }
 
-# ===========================================================================
-# State
-# ===========================================================================
-_active = {"face": None, "name": None}      
-_lock   = asyncio.Lock()                    
-_last   = {"jpeg": None}                    
+  @media (max-width: 768px) {
+    #pip { width: 105px; height: 140px; bottom: 120px; right: 12px; }
+    #topbar { padding: 12px 16px; }
+    .avatar { width: 36px; height: 36px; font-size: 17px; }
+    .caller-name { font-size: 14px; }
+    .timer { font-size: 11px; padding: 4px 10px; }
+    #controls { gap: 16px; padding: 14px 14px 26px; }
+    .ctrl { width: 56px; height: 56px; font-size: 22px; }
+    .ctrl svg { width: 22px; height: 22px; }
+  }
+</style>
+</head>
+<body>
 
-def _resize(frame):
-    h, w = frame.shape[:2]
-    if w <= MAX_W and h <= MAX_H: return frame
-    s = min(MAX_W / w, MAX_H / h)
-    return cv2.resize(frame, (int(w*s), int(h*s)), interpolation=cv2.INTER_AREA)
+<div id="stage">
+  <img id="output" alt="">
+  <div class="empty" id="stage-empty">
+    <div class="icon">🎭</div>
+    <div class="label">Choose a face, then start your camera</div>
+  </div>
+</div>
 
-def _encode_jpeg(bgr):
-    ok, buf = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
-    return buf.tobytes() if ok else None
+<!-- Draggable PiP -->
+<div id="pip">
+  <video id="selfie" autoplay playsinline muted></video>
+</div>
 
-def _decode_jpeg(data: bytes):
-    arr = np.frombuffer(data, np.uint8)
-    return cv2.imdecode(arr, cv2.IMREAD_COLOR)
+<div id="topbar">
+  <div class="caller">
+    <div class="avatar">🎭</div>
+    <div>
+      <div class="caller-name">Deep-Live-Cam</div>
+      <div class="caller-status"><span class="dot"></span><span>Live · Encrypted</span></div>
+    </div>
+  </div>
+  <div class="timer" id="timer">00:00</div>
+</div>
 
-def _safe_name(name: str) -> str:
-    return re.sub(r"[^a-zA-Z0-9 _-]", "", name or "").strip()[:32] or "unnamed"
+<div id="controls">
+  <button class="ctrl" id="btn-faces" title="Choose face">🎭</button>
+  <button class="ctrl primary" id="btn-cam" title="Start camera">
+    <svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+  </button>
+  <button class="ctrl" id="btn-fullscreen" title="Fullscreen">⛶</button>
+  <button class="ctrl danger" id="btn-end" title="End call">📴</button>
+</div>
 
-def _list_faces():
-    return sorted([p.stem for p in (ROOT / "faces").glob("*.jpg")])
+<div class="modal" id="face-modal">
+  <div class="sheet">
+    <div class="sheet-head">
+      <div class="sheet-title">Choose a face</div>
+      <button class="close" data-close="face-modal">✕</button>
+    </div>
+    <div class="face-grid" id="face-grid"></div>
+    <div class="add-form">
+      <input type="text" id="face-name" placeholder="Name (e.g. Alice)" maxlength="32">
+      <label class="file-drop">
+        <span>📷 Tap to upload a photo</span>
+        <input type="file" id="face-file" accept="image/*">
+        <img id="face-preview">
+      </label>
+      <button class="btn" id="btn-save-face" disabled>Save to library</button>
+    </div>
+  </div>
+</div>
 
-def _load_face(name: str):
-    path = ROOT / "faces" / f"{name}.jpg"
-    if not path.exists(): return False
-    bgr = cv2.imread(str(path))
-    if bgr is None: return False
-    face = get_one_face(_resize(bgr))
-    if face is None: return False
-    
-    _active["face"] = face
-    _active["name"] = name
-    modules.globals.source_path = str(path)
-    modules.globals.frame_processors = ["face_swapper"]
-    _last["jpeg"] = None
-    return True
+<div id="toast"></div>
 
-# ===========================================================================
-# Lynkio app
-# ===========================================================================
-from lynkio import Lynk, render_template
+<script src="/lynkio/client.js"></script>
+<script>
+(() => {
+  "use strict";
+  const $ = (s) => document.querySelector(s);
+  const output = $("#output"), stageEmpty = $("#stage-empty"), selfie = $("#selfie"), timerEl = $("#timer"), faceGrid = $("#face-grid"), toastEl = $("#toast");
+  const pip = $("#pip");
 
-app = Lynk(
-    host="0.0.0.0",
-    port=int(os.environ.get("PORT", "7860")),
-    protocol="AUTO",
-    serve_client=True,
-    rate_limit=120,
-    max_payload_size=20 * 1024 * 1024,  # 20MB limit
-    debug=False,
-)
+  let client = null;
+  let stream = null;
+  let sendLoop = null;
+  let timerStart = null;
+  let lastFrameAt = 0;
+  let activeFace = null;
+  let faces = [];
+  let pendingB64 = null;
 
-# Serve static files (UI and face thumbnails)
-app.static("/static", str(ROOT / "static"))
-app.static("/faces", str(ROOT / "faces"))
+  // Connection State Flags
+  let isConnected = false;
+  let isConnecting = false;
+  let reconnectTimer = null;
 
-@app.get("/")
-async def index(req):
-    return render_template("index.html", {"title": "Deep-Live-Cam Studio"})
+  function toast(msg, kind = "") {
+    toastEl.textContent = msg; toastEl.className = "show " + kind;
+    clearTimeout(toast._t); toast._t = setTimeout(() => toastEl.classList.remove("show"), 2500);
+  }
 
-# ===========================================================================
-# WebSocket Events (JSON Serialized)
-# ===========================================================================
-@app.on_internal("connect")
-async def on_connect(client, _):
-    print(f"[DLC] client connected: {client.id}", flush=True)
-    payload = json.dumps({
-        "event": "ready",
-        "data": {"faces": _list_faces(), "active": _active["name"]},
-    })
-    await client.send(payload)
+  // ---- DRAGGABLE PiP ----
+  let isDragging = false, dragStartX, dragStartY, initialRight, initialBottom;
+  
+  pip.addEventListener('mousedown', dragStart);
+  pip.addEventListener('touchstart', dragStart, {passive: true});
 
-@app.on("ping")
-async def ws_ping(client, data):
-    await client.send(json.dumps({"event": "pong", "data": time.time()}))
+  function dragStart(e) {
+    if (e.target.tagName === 'BUTTON') return;
+    const evt = e.touches ? e.touches[0] : e;
+    dragStartX = evt.clientX;
+    dragStartY = evt.clientY;
+    const rect = pip.getBoundingClientRect();
+    initialRight = window.innerWidth - rect.right;
+    initialBottom = window.innerHeight - rect.bottom;
 
-@app.on("save_face")
-async def ws_save_face(client, data):
-    name = _safe_name(data.get("name", ""))
-    b64  = data.get("image", "")
-    if not name or not b64:
-        return await client.send(json.dumps({"event": "error", "data": "Name and image required"}))
-    
-    try:
-        raw = base64.b64decode(b64.split(",")[-1])
-        bgr = _decode_jpeg(raw)
-        if bgr is None:
-            return await client.send(json.dumps({"event": "error", "data": "Invalid image format"}))
+    document.addEventListener('mousemove', dragMove);
+    document.addEventListener('touchmove', dragMove, {passive: false});
+    document.addEventListener('mouseup', dragEnd);
+    document.addEventListener('touchend', dragEnd);
+    isDragging = true;
+  }
+
+  function dragMove(e) {
+    if (!isDragging) return;
+    if (e.cancelable) e.preventDefault();
+    const evt = e.touches ? e.touches[0] : e;
+    const dx = dragStartX - evt.clientX;
+    const dy = dragStartY - evt.clientY;
+
+    let newRight = initialRight + dx;
+    let newBottom = initialBottom + dy;
+
+    // Constrain to viewport
+    newRight = Math.max(10, Math.min(window.innerWidth - pip.offsetWidth - 10, newRight));
+    newBottom = Math.max(80, Math.min(window.innerHeight - pip.offsetHeight - 80, newBottom));
+
+    pip.style.right = newRight + 'px';
+    pip.style.bottom = newBottom + 'px';
+  }
+
+  function dragEnd() {
+    isDragging = false;
+    document.removeEventListener('mousemove', dragMove);
+    document.removeEventListener('touchmove', dragMove);
+    document.removeEventListener('mouseup', dragEnd);
+    document.removeEventListener('touchend', dragEnd);
+  }
+
+  // ---- TIMER ----
+  setInterval(() => {
+    if (!stream) { timerEl.textContent = "00:00"; return; }
+    if (!timerStart) timerStart = Date.now();
+    const s = Math.floor((Date.now() - timerStart) / 1000);
+    timerEl.textContent = String(Math.floor(s/60)).padStart(2,"0") + ":" + String(s%60).padStart(2,"0");
+  }, 500);
+
+  // ---- CAMERA ----
+  async function startCamera() {
+    if (stream) stopCamera();
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+      selfie.srcObject = stream;
+      await selfie.play().catch(() => {});
+      timerStart = null; lastFrameAt = 0;
+      startSending();
+      toast("Camera started", "ok");
+    } catch (e) { toast("Camera error: " + e.message, "err"); }
+  }
+
+  function stopCamera() {
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    selfie.srcObject = null;
+    if (sendLoop) { clearInterval(sendLoop); sendLoop = null; }
+    timerStart = null;
+    output.style.display = "none"; stageEmpty.style.display = "flex";
+  }
+
+  // ---- FRAME CAPTURE ----
+  const canvas = document.createElement("canvas"); const ctx = canvas.getContext("2d");
+  async function captureFrame() {
+    if (!stream || selfie.readyState < 2) return null;
+    const w = selfie.videoWidth || 640, h = selfie.videoHeight || 480;
+    canvas.width = w; canvas.height = h;
+    ctx.drawImage(selfie, 0, 0, w, h);
+    return new Promise(resolve => {
+      canvas.toBlob(blob => blob ? blob.arrayBuffer().then(buf => resolve(new Uint8Array(buf))) : resolve(null), "image/jpeg", 0.75);
+    });
+  }
+
+  function startSending() {
+    if (sendLoop) clearInterval(sendLoop);
+    sendLoop = setInterval(async () => {
+      if (!isConnected || !stream) return;
+      if (Date.now() - lastFrameAt < 200) return;
+      lastFrameAt = Date.now();
+      const frame = await captureFrame();
+      if (frame) client.sendBinaryEvent("frame", frame);
+    }, 200);
+  }
+
+  // ---- FACES ----
+  function renderFaces() {
+    faceGrid.innerHTML = "";
+    if (!faces.length) {
+      faceGrid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--dim);padding:24px 0;font-size:13px">No faces saved yet</div>';
+      return;
+    }
+    faces.forEach(name => {
+      const div = document.createElement("div");
+      div.className = "face-item" + (name === activeFace ? " active" : "");
+      div.innerHTML = `
+        <img src="/faces/${encodeURIComponent(name)}.jpg?t=${Date.now()}" alt="${name}">
+        <div class="name">${name}</div>
+        <button class="del" title="Delete">✕</button>`;
+      div.addEventListener("click", (e) => {
+        if (e.target.classList.contains("del")) {
+          e.stopPropagation();
+          if (confirm(`Delete "${name}"?`)) client.emit("delete_face", { name });
+          return;
+        }
+        client.emit("select_face", { name });
+      });
+      faceGrid.appendChild(div);
+    });
+  }
+
+  // ---- UPLOAD & SAVE ----
+  const fileInput = $("#face-file"), preview = $("#face-preview");
+  const btnSave = $("#btn-save-face");
+
+  fileInput.addEventListener("change", () => {
+    const f = fileInput.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement("canvas");
+        let w = img.width, h = img.height;
+        if (w > 640) { h = Math.round(h * (640 / w)); w = 640; }
+        c.width = w; c.height = h;
+        c.getContext("2d").drawImage(img, 0, 0, w, h);
         
-        if get_one_face(_resize(bgr)) is None:
-            return await client.send(json.dumps({"event": "error", "data": "No face detected"}))
-            
-        cv2.imwrite(str(ROOT / "faces" / f"{name}.jpg"), _resize(bgr))
-        _load_face(name)
-        
-        await client.send(json.dumps({
-            "event": "face_saved",
-            "data": {"name": name, "faces": _list_faces()}
-        }))
-    except Exception as e:
-        await client.send(json.dumps({"event": "error", "data": str(e)}))
+        pendingB64 = c.toDataURL("image/jpeg", 0.85);
+        preview.src = pendingB64;
+        preview.style.display = "block";
+        validateSave();
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(f);
+  });
 
-@app.on("select_face")
-async def ws_select_face(client, data):
-    name = data.get("name", "")
-    if _load_face(name):
-        await client.send(json.dumps({"event": "face_changed", "data": {"name": name}}))
-    else:
-        await client.send(json.dumps({"event": "error", "data": "Failed to load face"}))
+  $("#face-name").addEventListener("input", validateSave);
+  function validateSave() { btnSave.disabled = !pendingB64 || !$("#face-name").value.trim(); }
 
-@app.on("delete_face")
-async def ws_delete_face(client, data):
-    name = _safe_name(data.get("name", ""))
-    path = ROOT / "faces" / f"{name}.jpg"
-    if path.exists():
-        path.unlink()
-        if _active["name"] == name:
-            _active["face"] = None
-            _active["name"] = None
-    await client.send(json.dumps({
-        "event": "face_deleted", 
-        "data": {"faces": _list_faces(), "active": _active["name"]}
-    }))
+  btnSave.addEventListener("click", () => {
+    if (!pendingB64) return;
+    btnSave.disabled = true;
+    btnSave.textContent = "Saving...";
+    if (isConnected) {
+      client.emit("save_face", { name: $("#face-name").value.trim(), image: pendingB64 });
+    } else {
+      toast("Not connected to server", "err");
+      btnSave.disabled = false;
+      btnSave.textContent = "Save to library";
+    }
+  });
 
-# ===========================================================================
-# WebSocket Binary Events (Frames)
-# ===========================================================================
-@app.on_binary_event("frame")
-async def ws_frame(client, payload: bytes):
-    if _active["face"] is None:
-        await client.send_binary_event("out", payload)
-        return
+  // ---- CONTROLS ----
+  $("#btn-faces").addEventListener("click", () => $("#face-modal").classList.add("open"));
+  document.querySelectorAll("[data-close]").forEach(el => el.addEventListener("click", () => $("#" + el.dataset.close).classList.remove("open")));
+  document.querySelectorAll(".modal").forEach(el => el.addEventListener("click", e => { if (e.target === el) el.classList.remove("open"); }));
 
-    if _lock.locked():
-        if _last["jpeg"]: await client.send_binary_event("out", _last["jpeg"])
-        return
+  $("#btn-cam").addEventListener("click", () => stream ? stopCamera() : startCamera());
+  $("#btn-end").addEventListener("click", () => { stopCamera(); toast("Call ended"); });
+  
+  $("#btn-fullscreen").addEventListener("click", () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => toast("Fullscreen blocked", "err"));
+    } else {
+      document.exitFullscreen();
+    }
+  });
 
-    async with _lock:
-        try:
-            bgr = _decode_jpeg(payload)
-            if bgr is None:
-                await client.send_binary_event("out", payload)
-                return
-            
-            bgr = _resize(bgr)
-            for p in _processors:
-                bgr = p.process_frame(_active["face"], bgr)
-                
-            out = _encode_jpeg(bgr)
-            if out:
-                _last["jpeg"] = out
-                await client.send_binary_event("out", out)
-            else:
-                await client.send_binary_event("out", payload)
-        except BaseException as e:
-            print(f"[DLC] frame error: {e!r}", flush=True)
-            await client.send_binary_event("out", payload)
+  // ---- LYNCIO LIFECYCLE (Fixed Reconnection) ----
+  function initClient() {
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    client = new LynkClient(`${proto}://${location.host}`);
 
-if __name__ == "__main__":
-    print(f"[DLC] Lynkio listening on 0.0.0.0:{os.environ.get('PORT', '7860')}", flush=True)
-    app.run()
+    client.on("open", () => {
+      console.log("[WS] Connected");
+      isConnected = true;
+      isConnecting = false;
+      clearTimeout(reconnectTimer);
+    });
+
+    client.on("close", () => {
+      console.log("[WS] Disconnected");
+      isConnected = false;
+      isConnecting = false;
+      if (!reconnectTimer) reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, 3000);
+    });
+
+    client.on("ready", (d) => {
+      faces = d.faces || [];
+      activeFace = d.active || null;
+      renderFaces();
+    });
+
+    client.on("face_saved", (d) => {
+      faces = d.faces || []; activeFace = d.name; renderFaces();
+      $("#face-name").value = ""; fileInput.value = ""; pendingB64 = null;
+      preview.style.display = "none"; validateSave();
+      btnSave.disabled = false; btnSave.textContent = "Save to library";
+      toast(`Saved "${d.name}"`, "ok");
+      $("#face-modal").classList.remove("open");
+    });
+
+    client.on("face_changed", (d) => { activeFace = d.name; renderFaces(); toast(`Active: ${d.name}`, "ok"); });
+    client.on("face_deleted", (d) => { faces = d.faces || []; activeFace = d.active || null; renderFaces(); });
+    
+    client.on("error", (msg) => {
+      toast(String(msg), "err");
+      btnSave.disabled = false; btnSave.textContent = "Save to library";
+    });
+
+    client.onBinaryEvent("out", (payload) => {
+      const blob = new Blob([payload], { type: "image/jpeg" });
+      const url = URL.createObjectURL(blob);
+      output.onload = () => URL.revokeObjectURL(url);
+      output.src = url; output.style.display = "block"; stageEmpty.style.display = "none";
+    });
+
+    connect();
+  }
+
+  async function connect() {
+    if (isConnected || isConnecting) return;
+    isConnecting = true;
+    try {
+      await client.connect();
+    } catch (e) {
+      isConnecting = false;
+      if (!reconnectTimer) reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, 3000);
+    }
+  }
+
+  // Boot
+  initClient();
+})();
+</script>
+</body>
+</html>
