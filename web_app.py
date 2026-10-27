@@ -110,7 +110,7 @@ def _load_face(name: str):
 # ===========================================================================
 # Lynkio app
 # ===========================================================================
-from lynkio import Lynk, render_template, json_response
+from lynkio import Lynk, render_template
 
 app = Lynk(
     host="0.0.0.0",
@@ -118,7 +118,7 @@ app = Lynk(
     protocol="AUTO",
     serve_client=True,
     rate_limit=120,
-    max_payload_size=20 * 1024 * 1024,  # 20MB limit for base64 face uploads
+    max_payload_size=20 * 1024 * 1024,  # 20MB limit
     debug=False,
 )
 
@@ -131,53 +131,54 @@ async def index(req):
     return render_template("index.html", {"title": "Deep-Live-Cam Studio"})
 
 # ===========================================================================
-# WebSocket Events
+# WebSocket Events (JSON Serialized)
 # ===========================================================================
 @app.on_internal("connect")
 async def on_connect(client, _):
     print(f"[DLC] client connected: {client.id}", flush=True)
-    await client.send({
+    payload = json.dumps({
         "event": "ready",
         "data": {"faces": _list_faces(), "active": _active["name"]},
     })
+    await client.send(payload)
 
 @app.on("ping")
 async def ws_ping(client, data):
-    await client.send({"event": "pong", "data": time.time()})
+    await client.send(json.dumps({"event": "pong", "data": time.time()}))
 
 @app.on("save_face")
 async def ws_save_face(client, data):
     name = _safe_name(data.get("name", ""))
     b64  = data.get("image", "")
     if not name or not b64:
-        return await client.send({"event": "error", "data": "Name and image required"})
+        return await client.send(json.dumps({"event": "error", "data": "Name and image required"}))
     
     try:
         raw = base64.b64decode(b64.split(",")[-1])
         bgr = _decode_jpeg(raw)
         if bgr is None:
-            return await client.send({"event": "error", "data": "Invalid image format"})
+            return await client.send(json.dumps({"event": "error", "data": "Invalid image format"}))
         
         if get_one_face(_resize(bgr)) is None:
-            return await client.send({"event": "error", "data": "No face detected"})
+            return await client.send(json.dumps({"event": "error", "data": "No face detected"}))
             
         cv2.imwrite(str(ROOT / "faces" / f"{name}.jpg"), _resize(bgr))
         _load_face(name)
         
-        await client.send({
+        await client.send(json.dumps({
             "event": "face_saved",
             "data": {"name": name, "faces": _list_faces()}
-        })
+        }))
     except Exception as e:
-        await client.send({"event": "error", "data": str(e)})
+        await client.send(json.dumps({"event": "error", "data": str(e)}))
 
 @app.on("select_face")
 async def ws_select_face(client, data):
     name = data.get("name", "")
     if _load_face(name):
-        await client.send({"event": "face_changed", "data": {"name": name}})
+        await client.send(json.dumps({"event": "face_changed", "data": {"name": name}}))
     else:
-        await client.send({"event": "error", "data": "Failed to load face"})
+        await client.send(json.dumps({"event": "error", "data": "Failed to load face"}))
 
 @app.on("delete_face")
 async def ws_delete_face(client, data):
@@ -188,8 +189,14 @@ async def ws_delete_face(client, data):
         if _active["name"] == name:
             _active["face"] = None
             _active["name"] = None
-    await client.send({"event": "face_deleted", "data": {"faces": _list_faces(), "active": _active["name"]}})
+    await client.send(json.dumps({
+        "event": "face_deleted", 
+        "data": {"faces": _list_faces(), "active": _active["name"]}
+    }))
 
+# ===========================================================================
+# WebSocket Binary Events (Frames)
+# ===========================================================================
 @app.on_binary_event("frame")
 async def ws_frame(client, payload: bytes):
     if _active["face"] is None:
