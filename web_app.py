@@ -68,161 +68,136 @@ JPEG_QUALITY = int(os.environ.get("JPEG_QUALITY", "75"))
 # ===========================================================================
 # State
 # ===========================================================================
-_active = {"face": None, "name": None}      # current source face
-_lock   = asyncio.Lock()                    # serialises frame processing
-_last   = {"jpeg": None}                    # last processed frame
-
+_active = {"face": None, "name": None}      
+_lock   = asyncio.Lock()                    
+_last   = {"jpeg": None}                    
 
 def _resize(frame):
     h, w = frame.shape[:2]
-    if w <= MAX_W and h <= MAX_H:
-        return frame
+    if w <= MAX_W and h <= MAX_H: return frame
     s = min(MAX_W / w, MAX_H / h)
     return cv2.resize(frame, (int(w*s), int(h*s)), interpolation=cv2.INTER_AREA)
-
 
 def _encode_jpeg(bgr):
     ok, buf = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
     return buf.tobytes() if ok else None
 
-
 def _decode_jpeg(data: bytes):
     arr = np.frombuffer(data, np.uint8)
     return cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
-
 def _safe_name(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9 _-]", "", name or "").strip()[:32] or "unnamed"
-
 
 def _list_faces():
     return sorted([p.stem for p in (ROOT / "faces").glob("*.jpg")])
 
-
 def _load_face(name: str):
     path = ROOT / "faces" / f"{name}.jpg"
-    if not path.exists():
-        return None
+    if not path.exists(): return False
     bgr = cv2.imread(str(path))
-    if bgr is None:
-        return None
+    if bgr is None: return False
     face = get_one_face(_resize(bgr))
-    if face is None:
-        return None
+    if face is None: return False
+    
     _active["face"] = face
     _active["name"] = name
     modules.globals.source_path = str(path)
     modules.globals.frame_processors = ["face_swapper"]
     _last["jpeg"] = None
-    return face
-
+    return True
 
 # ===========================================================================
 # Lynkio app
 # ===========================================================================
-from lynkio import Lynk, render_template, json_response, abort
+from lynkio import Lynk, render_template, json_response
 
 app = Lynk(
     host="0.0.0.0",
     port=int(os.environ.get("PORT", "7860")),
     protocol="AUTO",
-    serve_client=True,          # serves /lynkio/client.js
-    rate_limit=60,              # 60 WS messages/sec per client
-    max_payload_size=1024 * 1024,
+    serve_client=True,
+    rate_limit=120,
+    max_payload_size=20 * 1024 * 1024,  # 20MB limit for base64 face uploads
     debug=False,
 )
 
-# ===========================================================================
-# Static / page routes
-# ===========================================================================
+# Serve static files (UI and face thumbnails)
 app.static("/static", str(ROOT / "static"))
-
+app.static("/faces", str(ROOT / "faces"))
 
 @app.get("/")
 async def index(req):
     return render_template("index.html", {"title": "Deep-Live-Cam Studio"})
 
-
 # ===========================================================================
-# Face library HTTP API
+# WebSocket Events
 # ===========================================================================
-@app.get("/api/faces")
-async def api_list_faces(req):
-    return json_response({
-        "faces": _list_faces(),
-        "active": _active["name"],
+@app.on_internal("connect")
+async def on_connect(client, _):
+    print(f"[DLC] client connected: {client.id}", flush=True)
+    await client.send({
+        "event": "ready",
+        "data": {"faces": _list_faces(), "active": _active["name"]},
     })
 
-
-@app.post("/api/faces")
-async def api_save_face(req):
-    data = await req.json()
-    name = _safe_name(data.get("name", ""))
-    b64  = data.get("image", "")
-    if not name or not b64:
-        abort(400, "name and image required")
-    try:
-        raw = base64.b64decode(b64.split(",")[-1])
-        bgr = _decode_jpeg(raw)
-        if bgr is None:
-            abort(400, "invalid image")
-        if get_one_face(_resize(bgr)) is None:
-            abort(400, "no face detected")
-        cv2.imwrite(str(ROOT / "faces" / f"{name}.jpg"), _resize(bgr))
-        return json_response({"ok": True, "name": name})
-    except Exception as e:
-        abort(400, str(e))
-
-
-@app.post("/api/faces/select")
-async def api_select_face(req):
-    data = await req.json()
-    name = data.get("name", "")
-    if _load_face(name) is None:
-        abort(404, "face not found or unreadable")
-    return json_response({"ok": True, "active": name})
-
-
-@app.delete("/api/faces/{name}")
-async def api_delete_face(req, name: str):
-    path = ROOT / "faces" / f"{name}.jpg"
-    if not path.exists():
-        abort(404, "not found")
-    path.unlink()
-    if _active["name"] == name:
-        _active["face"] = None
-        _active["name"] = None
-    return json_response({"ok": True})
-
-
-# ===========================================================================
-# WebSocket events
-# ===========================================================================
 @app.on("ping")
 async def ws_ping(client, data):
     await client.send({"event": "pong", "data": time.time()})
 
+@app.on("save_face")
+async def ws_save_face(client, data):
+    name = _safe_name(data.get("name", ""))
+    b64  = data.get("image", "")
+    if not name or not b64:
+        return await client.send({"event": "error", "data": "Name and image required"})
+    
+    try:
+        raw = base64.b64decode(b64.split(",")[-1])
+        bgr = _decode_jpeg(raw)
+        if bgr is None:
+            return await client.send({"event": "error", "data": "Invalid image format"})
+        
+        if get_one_face(_resize(bgr)) is None:
+            return await client.send({"event": "error", "data": "No face detected"})
+            
+        cv2.imwrite(str(ROOT / "faces" / f"{name}.jpg"), _resize(bgr))
+        _load_face(name)
+        
+        await client.send({
+            "event": "face_saved",
+            "data": {"name": name, "faces": _list_faces()}
+        })
+    except Exception as e:
+        await client.send({"event": "error", "data": str(e)})
 
-@app.on("set_face")
-async def ws_set_face(client, data):
+@app.on("select_face")
+async def ws_select_face(client, data):
     name = data.get("name", "")
     if _load_face(name):
         await client.send({"event": "face_changed", "data": {"name": name}})
     else:
-        await client.send({"event": "error", "data": "face not found"})
+        await client.send({"event": "error", "data": "Failed to load face"})
 
+@app.on("delete_face")
+async def ws_delete_face(client, data):
+    name = _safe_name(data.get("name", ""))
+    path = ROOT / "faces" / f"{name}.jpg"
+    if path.exists():
+        path.unlink()
+        if _active["name"] == name:
+            _active["face"] = None
+            _active["name"] = None
+    await client.send({"event": "face_deleted", "data": {"faces": _list_faces(), "active": _active["name"]}})
 
 @app.on_binary_event("frame")
 async def ws_frame(client, payload: bytes):
-    """Receive JPEG → process → send JPEG back as named binary event."""
     if _active["face"] is None:
         await client.send_binary_event("out", payload)
         return
 
     if _lock.locked():
-        # Drop stale frame — send last result immediately, keep latency bounded
-        if _last["jpeg"]:
-            await client.send_binary_event("out", _last["jpeg"])
+        if _last["jpeg"]: await client.send_binary_event("out", _last["jpeg"])
         return
 
     async with _lock:
@@ -231,9 +206,11 @@ async def ws_frame(client, payload: bytes):
             if bgr is None:
                 await client.send_binary_event("out", payload)
                 return
+            
             bgr = _resize(bgr)
             for p in _processors:
                 bgr = p.process_frame(_active["face"], bgr)
+                
             out = _encode_jpeg(bgr)
             if out:
                 _last["jpeg"] = out
@@ -244,19 +221,6 @@ async def ws_frame(client, payload: bytes):
             print(f"[DLC] frame error: {e!r}", flush=True)
             await client.send_binary_event("out", payload)
 
-
-@app.on_internal("connect")
-async def on_connect(client, _):
-    print(f"[DLC] client connected: {client.id}", flush=True)
-    await client.send({
-        "event": "ready",
-        "data": {"faces": _list_faces(), "active": _active["name"]},
-    })
-
-
-# ===========================================================================
-# Run
-# ===========================================================================
 if __name__ == "__main__":
     print(f"[DLC] Lynkio listening on 0.0.0.0:{os.environ.get('PORT', '7860')}", flush=True)
     app.run()
