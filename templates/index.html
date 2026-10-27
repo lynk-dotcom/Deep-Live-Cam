@@ -7,215 +7,76 @@
 <title>{{ title }}</title>
 <style>
   :root {
-    --bg: #0b141a;
-    --panel: #111b21;
-    --accent: #00a884;
-    --text: #e9edef;
-    --dim: #8696a0;
-    --danger: #ff3b30;
-    --radius: 16px;
+    --bg: #0b141a; --panel: #111b21; --accent: #00a884;
+    --text: #e9edef; --dim: #8696a0; --danger: #ff3b30; --radius: 16px;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body {
-    margin: 0; padding: 0; height: 100%; overflow: hidden;
-    background: var(--bg); color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  }
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
 
-  /* ---------- STAGE ---------- */
-  #stage {
-    position: fixed; inset: 0;
-    display: flex; align-items: center; justify-content: center;
-    background: radial-gradient(circle at center, #1a1f2e 0%, #050810 100%);
-    z-index: 1;
-  }
-  #output {
-    max-width: 100%; max-height: 100%;
-    object-fit: contain; display: block;
-  }
-  #stage .empty {
-    text-align: center; color: var(--dim);
-    display: flex; flex-direction: column; align-items: center; gap: 14px;
-  }
+  /* STAGE */
+  #stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at center, #1a1f2e 0%, #050810 100%); z-index: 1; }
+  #output { max-width: 100%; max-height: 100%; object-fit: contain; display: none; }
+  #stage .empty { text-align: center; color: var(--dim); display: flex; flex-direction: column; align-items: center; gap: 14px; }
   #stage .empty .icon { font-size: 64px; opacity: .3; }
   #stage .empty .label { font-size: 14px; letter-spacing: .3px; }
 
-  /* ---------- PiP ---------- */
-  #pip {
-    position: fixed; bottom: 140px; right: 20px;
-    width: 130px; height: 175px; border-radius: var(--radius);
-    overflow: hidden; z-index: 15;
-    border: 2px solid rgba(255,255,255,.22);
-    box-shadow: 0 8px 32px rgba(0,0,0,.6);
-    background: #000; transition: transform .2s;
-  }
+  /* PiP */
+  #pip { position: fixed; bottom: 140px; right: 20px; width: 130px; height: 175px; border-radius: var(--radius); overflow: hidden; z-index: 15; border: 2px solid rgba(255,255,255,.22); box-shadow: 0 8px 32px rgba(0,0,0,.6); background: #000; transition: transform .2s; }
   #pip video { width: 100%; height: 100%; object-fit: cover; }
   #pip.hidden { display: none; }
 
-  /* ---------- TOP BAR ---------- */
-  #topbar {
-    position: fixed; top: 0; left: 0; right: 0; z-index: 20;
-    padding: 16px 24px;
-    background: linear-gradient(180deg, rgba(0,0,0,.8), transparent);
-    display: flex; justify-content: space-between; align-items: center;
-    pointer-events: none;
-  }
+  /* TOP BAR */
+  #topbar { position: fixed; top: 0; left: 0; right: 0; z-index: 20; padding: 16px 24px; background: linear-gradient(180deg, rgba(0,0,0,.8), transparent); display: flex; justify-content: space-between; align-items: center; pointer-events: none; }
   #topbar * { pointer-events: auto; }
   .caller { display: flex; align-items: center; gap: 12px; }
-  .avatar {
-    width: 42px; height: 42px; border-radius: 50%;
-    background: linear-gradient(135deg, #00a884, #128c7e);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 20px; font-weight: 700; color: #fff;
-    box-shadow: 0 4px 12px rgba(0,168,132,.4);
-  }
+  .avatar { width: 42px; height: 42px; border-radius: 50%; background: linear-gradient(135deg, #00a884, #128c7e); display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 700; color: #fff; box-shadow: 0 4px 12px rgba(0,168,132,.4); }
   .caller-name { font-size: 16px; font-weight: 600; }
-  .caller-status {
-    font-size: 12px; color: rgba(255,255,255,.72);
-    display: flex; align-items: center; gap: 6px; margin-top: 2px;
-  }
-  .dot {
-    width: 6px; height: 6px; border-radius: 50%;
-    background: #25d366; box-shadow: 0 0 8px #25d366;
-    animation: pulse 1.5s infinite;
-  }
+  .caller-status { font-size: 12px; color: rgba(255,255,255,.72); display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: #25d366; box-shadow: 0 0 8px #25d366; animation: pulse 1.5s infinite; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
-  .timer {
-    font-family: "SF Mono", "JetBrains Mono", monospace;
-    font-size: 13px; color: rgba(255,255,255,.9);
-    background: rgba(0,0,0,.45);
-    padding: 6px 12px; border-radius: 20px;
-    backdrop-filter: blur(20px);
-    border: 1px solid rgba(255,255,255,.12);
-  }
+  .timer { font-family: "SF Mono", "JetBrains Mono", monospace; font-size: 13px; color: rgba(255,255,255,.9); background: rgba(0,0,0,.45); padding: 6px 12px; border-radius: 20px; backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,.12); }
 
-  /* ---------- CONTROLS ---------- */
-  #controls {
-    position: fixed; bottom: 0; left: 0; right: 0; z-index: 20;
-    padding: 20px 20px 32px;
-    background: linear-gradient(0deg, rgba(0,0,0,.92), transparent);
-    display: flex; justify-content: center; align-items: center; gap: 22px;
-  }
-  .ctrl {
-    width: 62px; height: 62px; border-radius: 50%;
-    background: rgba(255,255,255,.15);
-    backdrop-filter: blur(20px);
-    border: 1px solid rgba(255,255,255,.15);
-    color: #fff; font-size: 26px;
-    display: flex; align-items: center; justify-content: center;
-    cursor: pointer; transition: all .15s;
-  }
+  /* CONTROLS */
+  #controls { position: fixed; bottom: 0; left: 0; right: 0; z-index: 20; padding: 20px 20px 32px; background: linear-gradient(0deg, rgba(0,0,0,.92), transparent); display: flex; justify-content: center; align-items: center; gap: 22px; }
+  .ctrl { width: 62px; height: 62px; border-radius: 50%; background: rgba(255,255,255,.15); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,.15); color: #fff; font-size: 26px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all .15s; }
   .ctrl:hover { background: rgba(255,255,255,.25); transform: translateY(-2px); }
   .ctrl.primary { background: var(--accent); }
   .ctrl.danger { background: var(--danger); }
   .ctrl.danger:hover { background: #ff1744; box-shadow: 0 0 24px rgba(255,59,48,.6); }
   .ctrl svg { width: 26px; height: 26px; fill: currentColor; }
 
-  /* ---------- MODAL ---------- */
-  .modal {
-    position: fixed; inset: 0; z-index: 100;
-    background: rgba(0,0,0,.85);
-    backdrop-filter: blur(12px);
-    display: none; align-items: flex-end; justify-content: center;
-  }
+  /* MODAL */
+  .modal { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.85); backdrop-filter: blur(12px); display: none; align-items: flex-end; justify-content: center; }
   .modal.open { display: flex; }
-  .sheet {
-    background: #1a1f2e;
-    border-radius: 24px 24px 0 0;
-    padding: 20px; width: 100%; max-width: 640px;
-    max-height: 82vh; overflow-y: auto;
-    animation: slideUp .3s ease;
-  }
+  .sheet { background: #1a1f2e; border-radius: 24px 24px 0 0; padding: 20px; width: 100%; max-width: 640px; max-height: 82vh; overflow-y: auto; animation: slideUp .3s ease; }
   @keyframes slideUp { from { transform: translateY(100%) } to { transform: translateY(0) } }
-  .sheet-head {
-    display: flex; justify-content: space-between; align-items: center;
-    margin-bottom: 16px;
-  }
+  .sheet-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
   .sheet-title { font-size: 20px; font-weight: 700; }
-  .close {
-    width: 36px; height: 36px; border-radius: 50%;
-    background: rgba(255,255,255,.1); border: none;
-    color: #fff; font-size: 20px; cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-  }
+  .close { width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,.1); border: none; color: #fff; font-size: 20px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
 
-  /* Face grid */
-  .face-grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
-    gap: 10px; margin-bottom: 16px;
-  }
-  .face-item {
-    aspect-ratio: 1; border-radius: 12px; overflow: hidden;
-    border: 2px solid transparent; cursor: pointer;
-    background: #12161d; position: relative;
-    transition: border-color .15s;
-  }
+  /* FACE GRID */
+  .face-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .face-item { aspect-ratio: 1; border-radius: 12px; overflow: hidden; border: 2px solid transparent; cursor: pointer; background: #12161d; position: relative; transition: border-color .15s; }
   .face-item:hover { border-color: var(--accent); }
   .face-item.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
   .face-item img { width: 100%; height: 100%; object-fit: cover; }
-  .face-item .name {
-    position: absolute; bottom: 0; left: 0; right: 0;
-    padding: 4px 6px; font-size: 10px; text-align: center;
-    background: linear-gradient(0deg, rgba(0,0,0,.85), transparent);
-    color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }
-  .face-item .del {
-    position: absolute; top: 4px; right: 4px;
-    width: 22px; height: 22px; border-radius: 50%;
-    background: rgba(255,59,48,.9); border: none; color: #fff;
-    font-size: 12px; cursor: pointer; display: none;
-    align-items: center; justify-content: center;
-  }
+  .face-item .name { position: absolute; bottom: 0; left: 0; right: 0; padding: 4px 6px; font-size: 10px; text-align: center; background: linear-gradient(0deg, rgba(0,0,0,.85), transparent); color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .face-item .del { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border-radius: 50%; background: rgba(255,59,48,.9); border: none; color: #fff; font-size: 12px; cursor: pointer; display: none; align-items: center; justify-content: center; }
   .face-item:hover .del { display: flex; }
 
-  /* Add face form */
+  /* ADD FORM */
   .add-form { display: flex; flex-direction: column; gap: 10px; }
-  .add-form input[type="text"] {
-    background: #0b141a; border: 1px solid #2a3942; border-radius: 8px;
-    padding: 12px; color: var(--text); font-size: 14px; outline: none;
-  }
+  .add-form input[type="text"] { background: #0b141a; border: 1px solid #2a3942; border-radius: 8px; padding: 12px; color: var(--text); font-size: 14px; outline: none; }
   .add-form input[type="text"]:focus { border-color: var(--accent); }
-  .file-drop {
-    border: 2px dashed #2a3942; border-radius: 12px;
-    padding: 20px; text-align: center; color: var(--dim);
-    cursor: pointer; transition: border-color .15s;
-    position: relative; overflow: hidden;
-  }
+  .file-drop { border: 2px dashed #2a3942; border-radius: 12px; padding: 20px; text-align: center; color: var(--dim); cursor: pointer; transition: border-color .15s; position: relative; overflow: hidden; }
   .file-drop:hover { border-color: var(--accent); }
   .file-drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
-  .file-drop img { max-height: 140px; border-radius: 8px; margin-top: 8px; }
-  .btn {
-    padding: 12px; border-radius: 8px; border: none;
-    font-weight: 600; font-size: 14px; cursor: pointer;
-    background: var(--accent); color: #fff;
-  }
+  .file-drop img { max-height: 140px; border-radius: 8px; margin-top: 8px; display: none; }
+  .btn { padding: 12px; border-radius: 8px; border: none; font-weight: 600; font-size: 14px; cursor: pointer; background: var(--accent); color: #fff; }
   .btn:disabled { opacity: .5; cursor: not-allowed; }
 
-  /* Camera panel */
-  #cam-panel {
-    position: fixed; top: 76px; right: 20px; z-index: 30;
-    background: #1a1f2e; border: 1px solid rgba(255,255,255,.15);
-    border-radius: 12px; padding: 14px; display: none;
-    box-shadow: 0 8px 32px rgba(0,0,0,.6); min-width: 240px;
-  }
-  #cam-panel.open { display: block; }
-  #cam-panel label {
-    display: block; font-size: 11px; color: var(--dim);
-    margin-bottom: 8px; letter-spacing: 1px; text-transform: uppercase;
-  }
-  #cam-panel select {
-    width: 100%; background: #0b141a; color: var(--text);
-    border: 1px solid #2a3942; border-radius: 8px;
-    padding: 8px 12px; font-size: 13px; outline: none; cursor: pointer;
-  }
-
-  /* Status toast */
-  #toast {
-    position: fixed; top: 80px; left: 50%; transform: translateX(-50%) translateY(-20px);
-    background: #1a1f2e; border: 1px solid #2a3942; border-radius: 10px;
-    padding: 10px 16px; font-size: 13px; z-index: 200;
-    opacity: 0; transition: all .25s; pointer-events: none;
-  }
+  /* TOAST */
+  #toast { position: fixed; top: 80px; left: 50%; transform: translateX(-50%) translateY(-20px); background: #1a1f2e; border: 1px solid #2a3942; border-radius: 10px; padding: 10px 16px; font-size: 13px; z-index: 200; opacity: 0; transition: all .25s; pointer-events: none; }
   #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   #toast.ok { border-color: var(--accent); color: #25d366; }
   #toast.err { border-color: var(--danger); color: #f87171; }
@@ -229,27 +90,23 @@
     #controls { gap: 16px; padding: 14px 14px 26px; }
     .ctrl { width: 56px; height: 56px; font-size: 22px; }
     .ctrl svg { width: 22px; height: 22px; }
-    #cam-panel { top: 68px; right: 12px; left: 12px; min-width: auto; }
   }
 </style>
 </head>
 <body>
 
-<!-- STAGE -->
 <div id="stage">
-  <img id="output" alt="" style="display:none">
+  <img id="output" alt="">
   <div class="empty" id="stage-empty">
     <div class="icon">🎭</div>
     <div class="label">Choose a face, then start your camera</div>
   </div>
 </div>
 
-<!-- PiP -->
 <div id="pip">
   <video id="selfie" autoplay playsinline muted></video>
 </div>
 
-<!-- TOP BAR -->
 <div id="topbar">
   <div class="caller">
     <div class="avatar">🎭</div>
@@ -261,7 +118,6 @@
   <div class="timer" id="timer">00:00</div>
 </div>
 
-<!-- CONTROLS -->
 <div id="controls">
   <button class="ctrl" id="btn-faces" title="Choose face">🎭</button>
   <button class="ctrl primary" id="btn-cam" title="Start camera">
@@ -270,7 +126,6 @@
   <button class="ctrl danger" id="btn-end" title="End call">📴</button>
 </div>
 
-<!-- FACE MODAL -->
 <div class="modal" id="face-modal">
   <div class="sheet">
     <div class="sheet-head">
@@ -283,353 +138,184 @@
       <label class="file-drop">
         <span>📷 Tap to upload a photo</span>
         <input type="file" id="face-file" accept="image/*">
-        <img id="face-preview" style="display:none">
+        <img id="face-preview">
       </label>
       <button class="btn" id="btn-save-face" disabled>Save to library</button>
     </div>
   </div>
 </div>
 
-<!-- CAMERA PANEL -->
-<div id="cam-panel">
-  <label>Camera source</label>
-  <select id="cam-select"></select>
-</div>
-
-<!-- TOAST -->
 <div id="toast"></div>
 
-<!-- LYNCIO CLIENT -->
 <script src="/lynkio/client.js"></script>
 <script>
 (() => {
   "use strict";
-
-  // ---------- DOM ----------
   const $ = (s) => document.querySelector(s);
-  const output    = $("#output");
-  const stageEmpty= $("#stage-empty");
-  const selfie    = $("#selfie");
-  const timerEl   = $("#timer");
-  const faceGrid  = $("#face-grid");
-  const camPanel  = $("#cam-panel");
-  const camSelect = $("#cam-select");
-  const toastEl   = $("#toast");
+  const output = $("#output"), stageEmpty = $("#stage-empty"), selfie = $("#selfie"), timerEl = $("#timer"), faceGrid = $("#face-grid"), toastEl = $("#toast");
 
-  // ---------- State ----------
-  let client = null;
-  let stream = null;
-  let sendLoop = null;
-  let timerStart = null;
-  let lastFrameAt = 0;
-  let activeFace = null;
-  let faces = [];
+  let client = null, stream = null, sendLoop = null, timerStart = null, lastFrameAt = 0, activeFace = null, faces = [];
 
-  // ---------- Toast ----------
   function toast(msg, kind = "") {
-    toastEl.textContent = msg;
-    toastEl.className = "show " + kind;
-    clearTimeout(toast._t);
-    toast._t = setTimeout(() => toastEl.classList.remove("show"), 2200);
+    toastEl.textContent = msg; toastEl.className = "show " + kind;
+    clearTimeout(toast._t); toast._t = setTimeout(() => toastEl.classList.remove("show"), 2500);
   }
 
-  // ---------- Timer ----------
   setInterval(() => {
     if (!stream) { timerEl.textContent = "00:00"; return; }
     if (!timerStart) timerStart = Date.now();
     const s = Math.floor((Date.now() - timerStart) / 1000);
-    timerEl.textContent =
-      String(Math.floor(s / 60)).padStart(2, "0") + ":" +
-      String(s % 60).padStart(2, "0");
+    timerEl.textContent = String(Math.floor(s/60)).padStart(2,"0") + ":" + String(s%60).padStart(2,"0");
   }, 500);
 
-  // ---------- Camera enumeration ----------
-  async function refreshCameras() {
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const cams = devices.filter(d => d.kind === "videoinput");
-      const current = stream && stream.getVideoTracks()[0]
-        ? stream.getVideoTracks()[0].getSettings().deviceId : null;
-      camSelect.innerHTML = "";
-      cams.forEach((c, i) => {
-        const o = document.createElement("option");
-        o.value = c.deviceId;
-        o.textContent = c.label || `Camera ${i + 1}`;
-        if (c.deviceId === current) o.selected = true;
-        camSelect.appendChild(o);
-      });
-    } catch { /* permission not yet granted */ }
-  }
-
-  // ---------- Start / stop camera ----------
-  async function startCamera(deviceId) {
+  // ---- CAMERA ----
+  async function startCamera() {
     if (stream) stopCamera();
-    const constraints = {
-      video: deviceId
-        ? { deviceId: { exact: deviceId } }
-        : { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
-      audio: false,
-    };
-    stream = await navigator.mediaDevices.getUserMedia(constraints);
-    selfie.srcObject = stream;
-    await selfie.play().catch(() => {});
-    timerStart = null;
-    lastFrameAt = 0;
-    await refreshCameras();
-    startSending();
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+      selfie.srcObject = stream;
+      await selfie.play().catch(() => {});
+      timerStart = null; lastFrameAt = 0;
+      startSending();
+      toast("Camera started", "ok");
+    } catch (e) { toast("Camera error: " + e.message, "err"); }
   }
 
   function stopCamera() {
-    if (stream) {
-      stream.getTracks().forEach(t => t.stop());
-      stream = null;
-    }
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
     selfie.srcObject = null;
     if (sendLoop) { clearInterval(sendLoop); sendLoop = null; }
     timerStart = null;
-    output.style.display = "none";
-    stageEmpty.style.display = "flex";
+    output.style.display = "none"; stageEmpty.style.display = "flex";
   }
 
-  // ---------- Frame capture & send ----------
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
-
-  function captureFrame() {
+  // ---- FRAME CAPTURE ----
+  const canvas = document.createElement("canvas"); const ctx = canvas.getContext("2d");
+  async function captureFrame() {
     if (!stream || selfie.readyState < 2) return null;
-    const w = selfie.videoWidth || 640;
-    const h = selfie.videoHeight || 480;
-    if (!w || !h) return null;
-    canvas.width = w;
-    canvas.height = h;
+    const w = selfie.videoWidth || 640, h = selfie.videoHeight || 480;
+    canvas.width = w; canvas.height = h;
     ctx.drawImage(selfie, 0, 0, w, h);
     return new Promise(resolve => {
-      canvas.toBlob(blob => {
-        if (!blob) { resolve(null); return; }
-        blob.arrayBuffer().then(buf => resolve(new Uint8Array(buf)));
-      }, "image/jpeg", 0.75);
+      canvas.toBlob(blob => blob ? blob.arrayBuffer().then(buf => resolve(new Uint8Array(buf))) : resolve(null), "image/jpeg", 0.75);
     });
   }
 
-  async function startSending() {
+  function startSending() {
     if (sendLoop) clearInterval(sendLoop);
-    const fps = 5;
     sendLoop = setInterval(async () => {
-      if (!client || !client.connected) return;
-      if (!stream) return;
-      if (Date.now() - lastFrameAt < 1000 / fps) return;
+      if (!client || !client.connected || !stream) return;
+      if (Date.now() - lastFrameAt < 200) return;
       lastFrameAt = Date.now();
       const frame = await captureFrame();
       if (frame) client.sendBinaryEvent("frame", frame);
-    }, 1000 / fps);
+    }, 200);
   }
 
-  // ---------- Receive processed frames ----------
-  function setupReceiver(c) {
-    c.onBinaryEvent("out", (payload) => {
-      const blob = new Blob([payload], { type: "image/jpeg" });
-      const url = URL.createObjectURL(blob);
-      output.onload = () => URL.revokeObjectURL(url);
-      output.src = url;
-      output.style.display = "block";
-      stageEmpty.style.display = "none";
-    });
-  }
-
-  // ---------- Faces ----------
-  async function loadFaces() {
-    try {
-      const res = await fetch("/api/faces");
-      const data = await res.json();
-      faces = data.faces || [];
-      activeFace = data.active || null;
-      renderFaces();
-    } catch (e) { console.warn(e); }
-  }
-
+  // ---- FACES ----
   function renderFaces() {
     faceGrid.innerHTML = "";
     if (!faces.length) {
-      faceGrid.innerHTML =
-        '<div style="grid-column:1/-1;text-align:center;color:var(--dim);padding:24px 0;font-size:13px">No faces saved yet — add one below</div>';
+      faceGrid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--dim);padding:24px 0;font-size:13px">No faces saved yet</div>';
       return;
     }
     faces.forEach(name => {
       const div = document.createElement("div");
       div.className = "face-item" + (name === activeFace ? " active" : "");
       div.innerHTML = `
-        <img src="/faces/${encodeURIComponent(name)}.jpg" alt="${name}">
+        <img src="/faces/${encodeURIComponent(name)}.jpg?t=${Date.now()}" alt="${name}">
         <div class="name">${name}</div>
         <button class="del" title="Delete">✕</button>`;
-      div.addEventListener("click", async (e) => {
+      div.addEventListener("click", (e) => {
         if (e.target.classList.contains("del")) {
           e.stopPropagation();
-          if (!confirm(`Delete "${name}"?`)) return;
-          await fetch(`/api/faces/${encodeURIComponent(name)}`, { method: "DELETE" });
-          await loadFaces();
+          if (confirm(`Delete "${name}"?`)) client.emit("delete_face", { name });
           return;
         }
-        await selectFace(name);
+        client.emit("select_face", { name });
       });
       faceGrid.appendChild(div);
     });
   }
 
-  async function selectFace(name) {
-    try {
-      const res = await fetch("/api/faces/select", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-      if (!res.ok) { toast("Could not load face", "err"); return; }
-      activeFace = name;
-      renderFaces();
-      if (client && client.connected) {
-        client.emit("set_face", { name });
-      }
-      toast(`Face: ${name}`, "ok");
-      closeModal("face-modal");
-    } catch (e) { toast(e.message, "err"); }
-  }
-
-  // ---------- Add face ----------
-  const fileInput = $("#face-file");
-  const preview   = $("#face-preview");
-  let pendingB64  = null;
+  // ---- UPLOAD ----
+  const fileInput = $("#face-file"), preview = $("#face-preview");
+  let pendingB64 = null;
 
   fileInput.addEventListener("change", () => {
     const f = fileInput.files[0];
     if (!f) return;
     const reader = new FileReader();
-    reader.onload = () => {
-      pendingB64 = reader.result;
-      preview.src = pendingB64;
-      preview.style.display = "block";
-      validateSave();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        // Compress to max 640px before base64 encoding
+        const c = document.createElement("canvas");
+        let w = img.width, h = img.height;
+        if (w > 640) { h = Math.round(h * (640 / w)); w = 640; }
+        c.width = w; c.height = h;
+        c.getContext("2d").drawImage(img, 0, 0, w, h);
+        
+        pendingB64 = c.toDataURL("image/jpeg", 0.85);
+        preview.src = pendingB64;
+        preview.style.display = "block";
+        validateSave();
+      };
+      img.src = e.target.result;
     };
     reader.readAsDataURL(f);
   });
 
   $("#face-name").addEventListener("input", validateSave);
+  function validateSave() { $("#btn-save-face").disabled = !pendingB64 || !$("#face-name").value.trim(); }
 
-  function validateSave() {
-    $("#btn-save-face").disabled =
-      !pendingB64 || !$("#face-name").value.trim();
-  }
-
-  $("#btn-save-face").addEventListener("click", async () => {
-    const name = $("#face-name").value.trim();
-    if (!name || !pendingB64) return;
+  $("#btn-save-face").addEventListener("click", () => {
+    if (!pendingB64 || !client || !client.connected) return;
     $("#btn-save-face").disabled = true;
-    try {
-      const res = await fetch("/api/faces", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, image: pendingB64 }),
-      });
-      const data = await res.json();
-      if (!res.ok) { toast(data.error || "Save failed", "err"); return; }
-      toast(`Saved "${name}"`, "ok");
-      $("#face-name").value = "";
-      fileInput.value = "";
-      pendingB64 = null;
-      preview.style.display = "none";
-      await loadFaces();
-      await selectFace(name);
-    } catch (e) { toast(e.message, "err"); }
-    finally { validateSave(); }
+    $("#btn-save-face").textContent = "Saving...";
+    client.emit("save_face", { name: $("#face-name").value.trim(), image: pendingB64 });
   });
 
-  // ---------- Modal helpers ----------
-  function openModal(id) { $("#" + id).classList.add("open"); }
-  function closeModal(id) { $("#" + id).classList.remove("open"); }
-  document.querySelectorAll("[data-close]").forEach(el =>
-    el.addEventListener("click", () => closeModal(el.dataset.close))
-  );
-  document.querySelectorAll(".modal").forEach(el =>
-    el.addEventListener("click", e => { if (e.target === el) el.classList.remove("open"); })
-  );
+  // ---- CONTROLS ----
+  $("#btn-faces").addEventListener("click", () => $("#face-modal").classList.add("open"));
+  document.querySelectorAll("[data-close]").forEach(el => el.addEventListener("click", () => $("#" + el.dataset.close).classList.remove("open")));
+  document.querySelectorAll(".modal").forEach(el => el.addEventListener("click", e => { if (e.target === el) el.classList.remove("open"); }));
 
-  // ---------- Controls ----------
-  $("#btn-faces").addEventListener("click", () => { loadFaces(); openModal("face-modal"); });
+  $("#btn-cam").addEventListener("click", () => stream ? stopCamera() : startCamera());
+  $("#btn-end").addEventListener("click", () => { stopCamera(); toast("Call ended"); });
 
-  $("#btn-cam").addEventListener("click", async () => {
-    if (stream) { stopCamera(); return; }
-    try {
-      await startCamera(camSelect.value || undefined);
-      toast("Camera started", "ok");
-    } catch (e) { toast("Camera: " + e.message, "err"); }
-  });
-
-  $("#btn-end").addEventListener("click", () => {
-    stopCamera();
-    if (client && client.connected) client.emit("end", {});
-    toast("Call ended");
-  });
-
-  camSelect.addEventListener("change", async () => {
-    if (stream) {
-      try { await startCamera(camSelect.value); }
-      catch (e) { toast(e.message, "err"); }
-    }
-  });
-
-  // Toggle camera panel on 🎥 button (long-press / right-click alternative)
-  $("#btn-cam").addEventListener("contextmenu", async (e) => {
-    e.preventDefault();
-    await refreshCameras();
-    camPanel.classList.toggle("open");
-  });
-  document.addEventListener("click", (e) => {
-    if (!e.target.closest("#cam-panel") && !e.target.closest("#btn-cam")) {
-      camPanel.classList.remove("open");
-    }
-  });
-
-  // ---------- Lynkio connection ----------
+  // ---- LYNCIO ----
   async function connect() {
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    const url = `${proto}://${location.host}`;
-    client = new LynkClient(url);
+    client = new LynkClient(`${proto}://${location.host}`);
 
-    client.on("ready", (data) => {
-      faces = data.faces || [];
-      activeFace = data.active || null;
-      renderFaces();
-      if (activeFace) toast(`Active face: ${activeFace}`, "ok");
+    client.on("ready", (d) => { faces = d.faces || []; activeFace = d.active || null; renderFaces(); });
+    client.on("face_saved", (d) => {
+      faces = d.faces || []; activeFace = d.name; renderFaces();
+      $("#face-name").value = ""; fileInput.value = ""; pendingB64 = null;
+      preview.style.display = "none"; validateSave();
+      $("#btn-save-face").disabled = false; $("#btn-save-face").textContent = "Save to library";
+      toast(`Saved "${d.name}"`, "ok");
+      $("#face-modal").classList.remove("open");
     });
-    client.on("face_changed", (d) => { activeFace = d.name; renderFaces(); });
-    client.on("error", (msg) => toast(String(msg), "err"));
+    client.on("face_changed", (d) => { activeFace = d.name; renderFaces(); toast(`Active: ${d.name}`, "ok"); });
+    client.on("face_deleted", (d) => { faces = d.faces || []; activeFace = d.active || null; renderFaces(); });
+    client.on("error", (msg) => { toast(String(msg), "err"); $("#btn-save-face").disabled = false; $("#btn-save-face").textContent = "Save to library"; });
 
-    setupReceiver(client);
+    client.onBinaryEvent("out", (payload) => {
+      const blob = new Blob([payload], { type: "image/jpeg" });
+      const url = URL.createObjectURL(blob);
+      output.onload = () => URL.revokeObjectURL(url);
+      output.src = url; output.style.display = "block"; stageEmpty.style.display = "none";
+    });
 
-    try {
-      await client.connect();
-      console.log("[lynkio] connected");
-    } catch (e) {
-      toast("Connection failed — retrying…", "err");
-      setTimeout(connect, 2000);
-    }
+    try { await client.connect(); } catch (e) { setTimeout(connect, 3000); }
   }
 
-  // Reconnect on drop
   window.addEventListener("online", connect);
-  setInterval(() => {
-    if (client && !client.connected) connect();
-  }, 5000);
+  setInterval(() => { if (client && !client.connected) connect(); }, 5000);
 
-  // ---------- Boot ----------
-  (async () => {
-    await loadFaces();
-    await connect();
-    await refreshCameras();
-    // Auto-select first face if any
-    if (faces.length && !activeFace) {
-      // Don't auto-select; let user choose. Uncomment next line to auto-select:
-      // await selectFace(faces[0]);
-    }
-  })();
+  (async () => { await connect(); })();
 })();
 </script>
 </body>
