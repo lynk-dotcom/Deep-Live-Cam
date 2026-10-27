@@ -1,23 +1,18 @@
 """
 Deep-Live-Cam × Lynkio 1.3.1 — WebSocket binary streaming server.
-Memory-Optimized for 2GB RAM (Railway/Render)
+Memory-Optimized for 2GB RAM.
 """
 import os, sys, types, base64, re, json, asyncio, time
 from pathlib import Path
 
-# ===========================================================================
-# Model persistence — before any insightface import
-# ===========================================================================
 ROOT = Path(__file__).resolve().parent
 os.environ.setdefault("INSIGHTFACE_HOME", str(ROOT / "models" / "insightface"))
 os.environ.setdefault("HOME", str(ROOT / "models"))
-os.environ.setdefault("OMP_NUM_THREADS", "1") # Prevent ONNX from spawning too many threads
+os.environ.setdefault("OMP_NUM_THREADS", "1")
 (ROOT / "models").mkdir(exist_ok=True)
 (ROOT / "faces").mkdir(exist_ok=True)
 
-# ===========================================================================
-# Headless stub for modules.ui
-# ===========================================================================
+# Headless stub
 def _install_ui_stub():
     stub = types.ModuleType("modules.ui")
     def _noop(*_a, **_k): return None
@@ -36,7 +31,7 @@ os.environ["PATH"] = str(ROOT) + os.pathsep + os.environ.get("PATH", "")
 
 import cv2, numpy as np
 
-# Monkeypatch InsightFace to use a smaller detection size (Saves ~300MB RAM)
+# Patch InsightFace to use smaller det_size
 import insightface
 _orig_init = insightface.app.FaceAnalysis.__init__
 def _patched_init(self, *args, **kwargs):
@@ -57,11 +52,7 @@ modules.globals.execution_providers = {
 from modules.face_analyser import get_one_face
 from modules.processors.frame.core import get_frame_processors_modules
 
-# ===========================================================================
-# Preflight
-# ===========================================================================
 try:
-    # ONLY load face_swapper to save RAM
     _processors = get_frame_processors_modules(["face_swapper"])
     print(f"[DLC] preflight OK — {len(_processors)} processor(s)", flush=True)
 except BaseException as e:
@@ -69,20 +60,13 @@ except BaseException as e:
     print(f"[DLC] FATAL: {e!r}", flush=True)
     sys.exit(1)
 
-# ===========================================================================
-# Tunables
-# ===========================================================================
 TARGET_FPS   = float(os.environ.get("TARGET_FPS", "5"))
 MAX_W        = int(os.environ.get("MAX_WIDTH",  "384"))
 MAX_H        = int(os.environ.get("MAX_HEIGHT", "288"))
-JPEG_QUALITY = int(os.environ.get("JPEG_QUALITY", "70")) # Lower quality = less RAM
+JPEG_QUALITY = int(os.environ.get("JPEG_QUALITY", "70"))
 
-# ===========================================================================
-# State
-# ===========================================================================
 _active = {"face": None, "name": None}      
 _lock   = asyncio.Lock()                    
-_last   = {"jpeg": None}                    
 _last_warn = 0
 
 def _resize(frame):
@@ -117,15 +101,12 @@ def _load_face(name: str):
         bgr = cv2.resize(bgr, (720, int(h * s)), interpolation=cv2.INTER_AREA)
         
     face = get_one_face(bgr)
-    if face is None: 
-        print(f"[DLC] WARN: No face detected in {name}.jpg", flush=True)
-        return False
+    if face is None: return False
     
     _active["face"] = face
     _active["name"] = name
     modules.globals.source_path = str(path)
-    modules.globals.frame_processors = ["face_swapper"] # Override config to force only swapper
-    _last["jpeg"] = None
+    modules.globals.frame_processors = ["face_swapper"]
     print(f"[DLC] SUCCESS: Loaded source face '{name}'", flush=True)
     return True
 
@@ -134,14 +115,11 @@ def _process_frame_sync(bgr, face):
         bgr = p.process_frame(face, bgr)
     return bgr
 
-# ===========================================================================
-# Lynkio app
-# ===========================================================================
 from lynkio import Lynk, render_template
 
 app = Lynk(
     host="0.0.0.0",
-    port=int(os.environ.get("PORT", "7860")),
+    port=int(os.environ.get("PORT", "8080")),
     protocol="AUTO",
     serve_client=True,
     rate_limit=120,
@@ -155,44 +133,29 @@ app.static("/faces", str(ROOT / "faces"))
 async def index(req):
     return render_template("index.html", {"title": "Deep-Live-Cam Studio"})
 
-# ===========================================================================
-# WebSocket Events
-# ===========================================================================
 @app.on_internal("connect")
 async def on_connect(client, _):
     print(f"[DLC] client connected: {client.id}", flush=True)
-    payload = json.dumps({
+    await client.send(json.dumps({
         "event": "ready",
         "data": {"faces": _list_faces(), "active": _active["name"]},
-    })
-    await client.send(payload)
-
-@app.on("ping")
-async def ws_ping(client, data):
-    await client.send(json.dumps({"event": "pong", "data": time.time()}))
+    }))
 
 @app.on("save_face")
 async def ws_save_face(client, data):
     name = _safe_name(data.get("name", ""))
     b64  = data.get("image", "")
-    if not name or not b64:
-        return await client.send(json.dumps({"event": "error", "data": "Name and image required"}))
-    
+    if not name or not b64: return
     try:
         raw = base64.b64decode(b64.split(",")[-1])
         bgr = _decode_jpeg(raw)
-        if bgr is None:
-            return await client.send(json.dumps({"event": "error", "data": "Invalid image format"}))
+        if bgr is None: return
         
         cv2.imwrite(str(ROOT / "faces" / f"{name}.jpg"), bgr)
-        
-        if not _load_face(name):
-            return await client.send(json.dumps({"event": "error", "data": "Saved, but no face detected."}))
-        
-        await client.send(json.dumps({
-            "event": "face_saved",
-            "data": {"name": name, "faces": _list_faces()}
-        }))
+        if _load_face(name):
+            await client.send(json.dumps({"event": "face_saved", "data": {"name": name, "faces": _list_faces()}}))
+        else:
+            await client.send(json.dumps({"event": "error", "data": "No face detected."}))
     except Exception as e:
         await client.send(json.dumps({"event": "error", "data": str(e)}))
 
@@ -213,25 +176,23 @@ async def ws_delete_face(client, data):
         if _active["name"] == name:
             _active["face"] = None
             _active["name"] = None
-    await client.send(json.dumps({
-        "event": "face_deleted", 
-        "data": {"faces": _list_faces(), "active": _active["name"]}
-    }))
+    await client.send(json.dumps({"event": "face_deleted", "data": {"faces": _list_faces(), "active": _active["name"]}}))
 
 @app.on_binary_event("frame")
 async def ws_frame(client, payload: bytes):
     global _last_warn
     
+    # If no face selected, return raw payload
     if _active["face"] is None:
         now = time.time()
         if now - _last_warn > 5:
-            print("[DLC] WARN: Received frame but no face is selected", flush=True)
+            print("[DLC] WARN: No face selected. Returning raw frame.", flush=True)
             _last_warn = now
         await client.send_binary_event("out", payload)
         return
 
+    # If busy, just drop this frame. The client won't send a new one until we reply.
     if _lock.locked():
-        if _last["jpeg"]: await client.send_binary_event("out", _last["jpeg"])
         return
 
     async with _lock:
@@ -245,15 +206,10 @@ async def ws_frame(client, payload: bytes):
             out_bgr = await asyncio.to_thread(_process_frame_sync, bgr, _active["face"])
                 
             out = _encode_jpeg(out_bgr)
-            if out:
-                _last["jpeg"] = out
-                await client.send_binary_event("out", out)
-            else:
-                await client.send_binary_event("out", payload)
+            await client.send_binary_event("out", out if out else payload)
         except BaseException as e:
             print(f"[DLC] frame error: {e!r}", flush=True)
             await client.send_binary_event("out", payload)
 
 if __name__ == "__main__":
-    print(f"[DLC] Lynkio listening on 0.0.0.0:{os.environ.get('PORT', '7860')}", flush=True)
     app.run()
