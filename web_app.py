@@ -3,18 +3,43 @@ Deep-Live-Cam — Web Studio (streaming platform UI)
 
 Env: EXECUTION_PROVIDER, TARGET_FPS, MAX_WIDTH, MAX_HEIGHT
 """
-import os, sys, threading, time
+import os, sys, threading, time, types
+
+# ============================================================================
+# Headless stub for modules.ui — MUST be installed before any modules.* import
+# so that PySide6 / libEGL.so.1 are never loaded on the server.
+# ============================================================================
+def _install_ui_stub():
+    stub = types.ModuleType("modules.ui")
+    def _noop(*_a, **_k):
+        return None
+    for _name in (
+        "update_status", "init", "destroy", "close",
+        "create_analyser", "register_analyser", "register_frame_processor",
+        "set_frame_processor", "start", "start_preview", "stop_preview",
+        "init_preview", "update_preview", "update_tk_image", "update_frame",
+    ):
+        setattr(stub, _name, _noop)
+    stub.__dict__["__getattr__"] = lambda _n: _noop
+    stub.UI_AVAILABLE = False
+    sys.modules["modules.ui"] = stub
+
+_install_ui_stub()
+
 import cv2
 import numpy as np
 
+# Model bootstrap (your addition)
 from download import download_models
 download_models()
-
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 os.environ["PATH"] = ROOT + os.pathsep + os.environ.get("PATH", "")
 
+# ---------------------------------------------------------------------------
+# Execution provider must be set BEFORE onnxruntime loads
+# ---------------------------------------------------------------------------
 import modules.globals
 _p = os.environ.get("EXECUTION_PROVIDER", "cpu").lower()
 modules.globals.execution_providers = {
@@ -22,6 +47,9 @@ modules.globals.execution_providers = {
     "coreml": ["CoreMLExecutionProvider", "CPUExecutionProvider"],
 }.get(_p, ["CPUExecutionProvider"])
 
+# ---------------------------------------------------------------------------
+# Tunables
+# ---------------------------------------------------------------------------
 TARGET_FPS   = float(os.environ.get("TARGET_FPS",  "12"))
 STREAM_EVERY = 1.0 / TARGET_FPS
 MAX_W        = int(os.environ.get("MAX_WIDTH",  "640"))
@@ -31,7 +59,9 @@ import gradio as gr
 from modules.face_analyser import get_one_face
 from modules.processors.frame.core import get_frame_processors_modules
 
-# --- preflight: fail fast in docker logs, not mid-stream --------------------
+# ---------------------------------------------------------------------------
+# Preflight — surface the *real* failure if anything is broken
+# ---------------------------------------------------------------------------
 try:
     _preload = get_frame_processors_modules(["face_swapper"])
     print(f"[DLC] preflight OK — {len(_preload)} processor(s) loaded")
@@ -40,6 +70,9 @@ except BaseException as e:
     print(f"[DLC] FATAL: face_swapper failed to load: {e!r}")
     sys.exit(1)
 
+# ---------------------------------------------------------------------------
+# State
+# ---------------------------------------------------------------------------
 _state     = {"source_face": None, "processors": _preload}
 _proc_lock = threading.Lock()
 _last_out  = {"frame": None}
@@ -50,7 +83,7 @@ def _resize(frame):
     if w <= MAX_W and h <= MAX_H:
         return frame
     s = min(MAX_W / w, MAX_H / h)
-    return cv2.resize(frame, (int(w*s), int(h*s)), interpolation=cv2.INTER_AREA)
+    return cv2.resize(frame, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA)
 
 
 def _status(kind, text):
@@ -101,7 +134,7 @@ def _process_frame(frame_rgb):
 
 
 # ===========================================================================
-# STREAMING STUDIO THEME
+# Streaming-studio theme
 # ===========================================================================
 ZOOM_CSS = """
 :root, body, .gradio-container {
@@ -119,7 +152,6 @@ ZOOM_CSS = """
     --color-accent: #ff2d55 !important;
     --color-accent-soft: rgba(255,45,85,.15) !important;
 }
-
 .gradio-container {
     background: #0a0e14 !important;
     max-width: 1600px !important;
@@ -127,8 +159,6 @@ ZOOM_CSS = """
     padding: 0 !important;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
 }
-
-/* === TOP BAR === */
 .stream-topbar {
     display:flex; align-items:center; justify-content:space-between;
     padding: 14px 28px;
@@ -164,10 +194,8 @@ ZOOM_CSS = """
 .tb-stat-val { font-size:14px; font-weight:700; color:#e6edf3; }
 .tb-stat-lbl { font-size:10px; color:#7d8590; letter-spacing:.8px; text-transform:uppercase; }
 
-/* === MAIN === */
 .stream-main { padding: 20px 24px 24px 24px !important; gap: 20px !important; background: #0a0e14; }
 .program-col { min-width: 0 !important; }
-
 .program-stage {
     position: relative;
     background: #000;
@@ -245,10 +273,7 @@ ZOOM_CSS = """
     background:transparent !important; border:none !important;
     box-shadow:none !important; padding:0 !important;
 }
-
-.dlc-footer {
-    text-align:center; color:#484f58; font-size:12px; padding:8px 0 24px;
-}
+.dlc-footer { text-align:center; color:#484f58; font-size:12px; padding:8px 0 24px; }
 .dlc-footer a { color:#ff2d55; text-decoration:none; }
 
 @media (max-width: 900px) {
@@ -266,7 +291,6 @@ ZOOM_CSS = """
 SCRIPTS = r"""
 <script>
 (function () {
-  /* ---------- camera selector (PC only) ---------- */
   const SEL_ID = 'dlc-camera-selector';
   async function inject(video) {
     if (!video || !video.srcObject) return;
@@ -279,7 +303,6 @@ SCRIPTS = r"""
     if (cams.length <= 1) return;
     const s = tracks[0].getSettings ? tracks[0].getSettings() : {};
     const curId = s.deviceId;
-
     const wrap = document.createElement('div');
     wrap.id = SEL_ID; wrap.className = 'dlc-cam-selector';
     const ico = document.createElement('span');
@@ -331,7 +354,6 @@ SCRIPTS = r"""
     }
   });
 
-  /* ---------- FPS + session timer ---------- */
   function waitFor(id, cb) {
     const t0 = Date.now();
     const iv = setInterval(() => {
@@ -344,9 +366,7 @@ SCRIPTS = r"""
     const start = Date.now();
     setInterval(() => {
       const s = Math.floor((Date.now() - start) / 1000);
-      const mm = String(Math.floor(s/60)).padStart(2,'0');
-      const ss = String(s%60).padStart(2,'0');
-      el.textContent = mm + ':' + ss;
+      el.textContent = String(Math.floor(s/60)).padStart(2,'0') + ':' + String(s%60).padStart(2,'0');
     }, 1000);
   });
   waitFor('dlc-fps', el => {
@@ -355,16 +375,12 @@ SCRIPTS = r"""
     function attach(img) {
       if (attached.has(img)) return;
       attached.add(img);
-      new MutationObserver(() => { count++; })
-        .observe(img, { attributes: true, attributeFilter: ['src'] });
+      new MutationObserver(() => { count++; }).observe(img, { attributes: true, attributeFilter: ['src'] });
     }
     setInterval(() => {
       document.querySelectorAll('.program-stage img, .program-stage canvas').forEach(attach);
       const now = performance.now(), dt = (now - last) / 1000;
-      if (dt >= 1) {
-        el.textContent = (count / dt).toFixed(1);
-        count = 0; last = now;
-      }
+      if (dt >= 1) { el.textContent = (count / dt).toFixed(1); count = 0; last = now; }
     }, 500);
   });
 })();
@@ -381,18 +397,10 @@ TOPBAR_HTML = """
       <div class="tb-sub">Live Studio</div>
     </div>
   </div>
-  <div class="tb-center">
-    <div class="live-pill">Live</div>
-  </div>
+  <div class="tb-center"><div class="live-pill">Live</div></div>
   <div class="tb-stats">
-    <div class="tb-stat">
-      <div class="tb-stat-val" id="dlc-fps">0.0</div>
-      <div class="tb-stat-lbl">FPS</div>
-    </div>
-    <div class="tb-stat">
-      <div class="tb-stat-val" id="dlc-timer">00:00</div>
-      <div class="tb-stat-lbl">Session</div>
-    </div>
+    <div class="tb-stat"><div class="tb-stat-val" id="dlc-fps">0.0</div><div class="tb-stat-lbl">FPS</div></div>
+    <div class="tb-stat"><div class="tb-stat-val" id="dlc-timer">00:00</div><div class="tb-stat-lbl">Session</div></div>
   </div>
 </div>
 """
