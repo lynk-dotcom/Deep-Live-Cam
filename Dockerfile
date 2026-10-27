@@ -1,82 +1,61 @@
-# syntax=docker/dockerfile:1.7
-FROM python:3.12-slim-bookworm
+# --- STAGE 1: Build dependencies ---
+FROM python:3.12-slim-bookworm AS builder
 
-# ---------------------------------------------------------------------------
-# Environment
-# ---------------------------------------------------------------------------
-ENV DEBIAN_FRONTEND=noninteractive \
-    PYTHONUNBUFFERED=1 \
+ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    QT_QPA_PLATFORM=offscreen \
     INSIGHTFACE_HOME=/app/models/insightface \
-    # runtime tunables — override at `docker run -e` or in compose
-    TARGET_FPS=12 \
-    MAX_WIDTH=640 \
-    MAX_HEIGHT=480 \
-    EXECUTION_PROVIDER=cpu \
-    OMP_NUM_THREADS=4 \
-    OPENCV_FFMPEG_CAPTURE_OPTIONS="threads;1" \
-    GRADIO_SERVER_NAME=0.0.0.0 \
-    GRADIO_SERVER_PORT=7860
+    HOME=/app/models \
+    OMP_NUM_THREADS=1 \
+    PORT=8080
 
 WORKDIR /app
 
-# ---------------------------------------------------------------------------
-# System packages
-# ---------------------------------------------------------------------------
-# libegl1 / libgl1-mesa-dri kept as belt-and-suspenders: even though ui.py is
-# stubbed at runtime, any stray Qt import will still find its libraries.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        # build toolchain (needed for a few wheels: insightface, onnxruntime)
-        build-essential \
-        cmake \
-        git \
-        curl \
-        wget \
-        ca-certificates \
-        # OpenCV / GL runtime
-        libglib2.0-0 \
-        libgl1 \
-        libglx0 \
-        libegl1 \
-        libgl1-mesa-dri \
-        # OpenMP (onnxruntime CPU EP)
-        libgomp1 \
-        # GStreamer (opencv video backend)
-        libgstreamer1.0-0 \
-        libgstreamer-plugins-base1.0-0 \
-        # v4l (optional local camera passthrough)
-        libv4l-0 \
-        # media
-        ffmpeg \
-    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+        build-essential cmake git \
+    && rm -rf /var/lib/apt/lists/*
 
-# ---------------------------------------------------------------------------
-# Python dependencies (cached separately from app source)
-# ---------------------------------------------------------------------------
-COPY requirements.txt /app/requirements.txt
-RUN python -m pip install --upgrade pip setuptools wheel \
-    && python -m pip install -r /app/requirements.txt
+COPY requirements.txt .
+# Install python packages into a virtualenv
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+RUN pip install --upgrade pip setuptools wheel \
+    && pip install -r requirements.txt
 
-# ---------------------------------------------------------------------------
-# Application source + non-root user
-# ---------------------------------------------------------------------------
-COPY . /app
+# --- STAGE 2: Final slim image ---
+FROM python:3.12-slim-bookworm
 
-RUN mkdir -p /app/models/insightface /app/models \
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    INSIGHTFACE_HOME=/app/models/insightface \
+    HOME=/app/models \
+    OMP_NUM_THREADS=1 \
+    PORT=8080
+
+WORKDIR /app
+
+# ONLY install runtime libraries (No build-essential, no cmake)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libglib2.0-0 libgl1 libglx0 libegl1 libgl1-mesa-dri \
+        libgomp1 libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 \
+        libv4l-0 ffmpeg curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the virtualenv from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy app code
+COPY . .
+
+RUN mkdir -p /app/models/insightface /app/faces \
     && useradd -m -u 1000 -s /bin/bash dlc \
     && chown -R dlc:dlc /app
 USER dlc
 
-# ---------------------------------------------------------------------------
-# Runtime
-# ---------------------------------------------------------------------------
-EXPOSE 7860
+EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
-    CMD curl -fsS http://localhost:7860/ >/dev/null || exit 1
+    CMD curl -fsS http://localhost:8080/ >/dev/null || exit 1
 
-# -u keeps stdout unbuffered so `docker logs` shows preflight + tracebacks
-CMD ["python", "-u", "web_app.py"]
+CMD ["python", "-u", "server.py"]
