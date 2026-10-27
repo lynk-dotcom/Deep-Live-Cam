@@ -379,7 +379,14 @@
 
     client.on("ready", (d) => {
       faces = d.faces || [];
-      activeFace = d.active || null;
+      
+      // State Resync: If the server restarted, it might not know our active face.
+      // If we have an active face, send it back to the server.
+      if (activeFace && faces.includes(activeFace)) {
+        client.emit("select_face", { name: activeFace });
+      } else {
+        activeFace = d.active || null;
+      }
       renderFaces();
     });
 
