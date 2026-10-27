@@ -14,7 +14,7 @@ os.environ.setdefault("HOME", str(ROOT / "models"))
 (ROOT / "faces").mkdir(exist_ok=True)
 
 # ===========================================================================
-# Headless stub for modules.ui — prevents PySide6 / libEGL import
+# Headless stub for modules.ui
 # ===========================================================================
 def _install_ui_stub():
     stub = types.ModuleType("modules.ui")
@@ -97,14 +97,24 @@ def _load_face(name: str):
     if not path.exists(): return False
     bgr = cv2.imread(str(path))
     if bgr is None: return False
-    face = get_one_face(_resize(bgr))
-    if face is None: return False
+    
+    # Keep source image high-res (up to 1080px) for accurate face detection
+    h, w = bgr.shape[:2]
+    if w > 1080:
+        s = 1080 / w
+        bgr = cv2.resize(bgr, (1080, int(h * s)), interpolation=cv2.INTER_AREA)
+        
+    face = get_one_face(bgr)
+    if face is None: 
+        print(f"[DLC] WARN: No face detected in {name}.jpg", flush=True)
+        return False
     
     _active["face"] = face
     _active["name"] = name
     modules.globals.source_path = str(path)
     modules.globals.frame_processors = ["face_swapper"]
     _last["jpeg"] = None
+    print(f"[DLC] SUCCESS: Loaded source face '{name}'", flush=True)
     return True
 
 # ===========================================================================
@@ -158,11 +168,11 @@ async def ws_save_face(client, data):
         if bgr is None:
             return await client.send(json.dumps({"event": "error", "data": "Invalid image format"}))
         
-        if get_one_face(_resize(bgr)) is None:
-            return await client.send(json.dumps({"event": "error", "data": "No face detected"}))
-            
-        cv2.imwrite(str(ROOT / "faces" / f"{name}.jpg"), _resize(bgr))
-        _load_face(name)
+        # Save image at original resolution
+        cv2.imwrite(str(ROOT / "faces" / f"{name}.jpg"), bgr)
+        
+        if not _load_face(name):
+            return await client.send(json.dumps({"event": "error", "data": "Saved, but no face detected. Try a clearer photo."}))
         
         await client.send(json.dumps({
             "event": "face_saved",
@@ -196,6 +206,10 @@ async def ws_delete_face(client, data):
 @app.on_binary_event("frame")
 async def ws_frame(client, payload: bytes):
     if _active["face"] is None:
+        # Throttled warning so logs don't flood
+        if time.time() - getattr(ws_frame, '_last_warn', 0) > 5:
+            print("[DLC] WARN: Received frame but no face is selected", flush=True)
+            ws_frame._last_warn = time.time()
         await client.send_binary_event("out", payload)
         return
 
