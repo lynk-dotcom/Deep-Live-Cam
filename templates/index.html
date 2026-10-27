@@ -13,16 +13,16 @@
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
 
-  /* STAGE */
+  /* STAGE (Main Output) */
   #stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at center, #1a1f2e 0%, #050810 100%); z-index: 1; }
   #output { max-width: 100%; max-height: 100%; object-fit: contain; display: none; }
   #stage .empty { text-align: center; color: var(--dim); display: flex; flex-direction: column; align-items: center; gap: 14px; }
   #stage .empty .icon { font-size: 64px; opacity: .3; }
   #stage .empty .label { font-size: 14px; letter-spacing: .3px; }
 
-  /* PiP (Draggable) */
-  #pip { position: fixed; bottom: 140px; right: 20px; width: 130px; height: 175px; border-radius: var(--radius); overflow: hidden; z-index: 15; border: 2px solid rgba(255,255,255,.22); box-shadow: 0 8px 32px rgba(0,0,0,.6); background: #000; cursor: grab; touch-action: none; }
-  #pip:active { cursor: grabbing; }
+  /* PiP (Draggable Selfie Camera) */
+  #pip { position: fixed; bottom: 140px; right: 20px; width: 130px; height: 175px; border-radius: var(--radius); overflow: hidden; z-index: 15; border: 2px solid rgba(255,255,255,.22); box-shadow: 0 8px 32px rgba(0,0,0,.6); background: #000; cursor: grab; touch-action: none; transition: transform .1s; }
+  #pip:active { cursor: grabbing; transform: scale(1.02); }
   #pip video { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
 
   /* TOP BAR */
@@ -32,8 +32,12 @@
   .avatar { width: 42px; height: 42px; border-radius: 50%; background: linear-gradient(135deg, #00a884, #128c7e); display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 700; color: #fff; box-shadow: 0 4px 12px rgba(0,168,132,.4); }
   .caller-name { font-size: 16px; font-weight: 600; }
   .caller-status { font-size: 12px; color: rgba(255,255,255,.72); display: flex; align-items: center; gap: 6px; margin-top: 2px; }
-  .dot { width: 6px; height: 6px; border-radius: 50%; background: #25d366; box-shadow: 0 0 8px #25d366; animation: pulse 1.5s infinite; }
+  
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #facc15; box-shadow: 0 0 8px #facc15; transition: all .3s; }
+  .dot.connected { background: #25d366; box-shadow: 0 0 8px #25d366; animation: pulse 1.5s infinite; }
+  .dot.disconnected { background: #ff3b30; box-shadow: 0 0 8px #ff3b30; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+  
   .timer { font-family: "SF Mono", "JetBrains Mono", monospace; font-size: 13px; color: rgba(255,255,255,.9); background: rgba(0,0,0,.45); padding: 6px 12px; border-radius: 20px; backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,.12); }
 
   /* CONTROLS */
@@ -46,7 +50,7 @@
   .ctrl.danger:hover { background: #ff1744; box-shadow: 0 0 24px rgba(255,59,48,.6); }
   .ctrl svg { width: 26px; height: 26px; fill: currentColor; }
 
-  /* MODAL */
+  /* MODAL (Bottom Sheet) */
   .modal { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.85); backdrop-filter: blur(12px); display: none; align-items: flex-end; justify-content: center; }
   .modal.open { display: flex; }
   .sheet { background: #1a1f2e; border-radius: 24px 24px 0 0; padding: 20px; width: 100%; max-width: 640px; max-height: 82vh; overflow-y: auto; animation: slideUp .3s ease; }
@@ -107,7 +111,6 @@
   </div>
 </div>
 
-<!-- Draggable PiP -->
 <div id="pip">
   <video id="selfie" autoplay playsinline muted></video>
 </div>
@@ -117,7 +120,10 @@
     <div class="avatar">🎭</div>
     <div>
       <div class="caller-name">Deep-Live-Cam</div>
-      <div class="caller-status"><span class="dot"></span><span>Live · Encrypted</span></div>
+      <div class="caller-status">
+        <span class="dot" id="conn-dot"></span>
+        <span id="conn-text">Connecting...</span>
+      </div>
     </div>
   </div>
   <div class="timer" id="timer">00:00</div>
@@ -159,7 +165,8 @@
   "use strict";
   const $ = (s) => document.querySelector(s);
   const output = $("#output"), stageEmpty = $("#stage-empty"), selfie = $("#selfie"), timerEl = $("#timer"), faceGrid = $("#face-grid"), toastEl = $("#toast");
-  const pip = $("#pip");
+  const pip = $("#pip"), connDot = $("#conn-dot"), connText = $("#conn-text");
+  const btnSave = $("#btn-save-face"), fileInput = $("#face-file"), preview = $("#face-preview");
 
   let client = null;
   let stream = null;
@@ -170,27 +177,27 @@
   let faces = [];
   let pendingB64 = null;
 
-  // Connection State Flags
-  let isConnected = false;
-  let isConnecting = false;
-  let reconnectTimer = null;
-
+  // ---- UI HELPERS ----
   function toast(msg, kind = "") {
     toastEl.textContent = msg; toastEl.className = "show " + kind;
     clearTimeout(toast._t); toast._t = setTimeout(() => toastEl.classList.remove("show"), 2500);
   }
 
-  // ---- DRAGGABLE PiP ----
+  function updateConnUI(status) {
+    connDot.className = "dot " + status;
+    if (status === "connected") connText.textContent = "Live · Connected";
+    else if (status === "connecting") connText.textContent = "Connecting...";
+    else connText.textContent = "Disconnected";
+  }
+
+  // ---- DRAGGABLE PIP (Touch & Mouse) ----
   let isDragging = false, dragStartX, dragStartY, initialRight, initialBottom;
-  
   pip.addEventListener('mousedown', dragStart);
   pip.addEventListener('touchstart', dragStart, {passive: true});
 
   function dragStart(e) {
-    if (e.target.tagName === 'BUTTON') return;
     const evt = e.touches ? e.touches[0] : e;
-    dragStartX = evt.clientX;
-    dragStartY = evt.clientY;
+    dragStartX = evt.clientX; dragStartY = evt.clientY;
     const rect = pip.getBoundingClientRect();
     initialRight = window.innerWidth - rect.right;
     initialBottom = window.innerHeight - rect.bottom;
@@ -209,12 +216,8 @@
     const dx = dragStartX - evt.clientX;
     const dy = dragStartY - evt.clientY;
 
-    let newRight = initialRight + dx;
-    let newBottom = initialBottom + dy;
-
-    // Constrain to viewport
-    newRight = Math.max(10, Math.min(window.innerWidth - pip.offsetWidth - 10, newRight));
-    newBottom = Math.max(80, Math.min(window.innerHeight - pip.offsetHeight - 80, newBottom));
+    let newRight = Math.max(10, Math.min(window.innerWidth - pip.offsetWidth - 10, initialRight + dx));
+    let newBottom = Math.max(80, Math.min(window.innerHeight - pip.offsetHeight - 80, initialBottom + dy));
 
     pip.style.right = newRight + 'px';
     pip.style.bottom = newBottom + 'px';
@@ -272,7 +275,8 @@
   function startSending() {
     if (sendLoop) clearInterval(sendLoop);
     sendLoop = setInterval(async () => {
-      if (!isConnected || !stream) return;
+      // Check readiness directly on the native WebSocket
+      if (!client || !client.ws || client.ws.readyState !== WebSocket.OPEN || !stream) return;
       if (Date.now() - lastFrameAt < 200) return;
       lastFrameAt = Date.now();
       const frame = await captureFrame();
@@ -307,9 +311,6 @@
   }
 
   // ---- UPLOAD & SAVE ----
-  const fileInput = $("#face-file"), preview = $("#face-preview");
-  const btnSave = $("#btn-save-face");
-
   fileInput.addEventListener("change", () => {
     const f = fileInput.files[0];
     if (!f) return;
@@ -338,15 +339,14 @@
 
   btnSave.addEventListener("click", () => {
     if (!pendingB64) return;
+    // Check native WebSocket state instead of non-existent library properties
+    if (!client || !client.ws || client.ws.readyState !== WebSocket.OPEN) {
+      toast("Not connected to server. Please wait...", "err");
+      return;
+    }
     btnSave.disabled = true;
     btnSave.textContent = "Saving...";
-    if (isConnected) {
-      client.emit("save_face", { name: $("#face-name").value.trim(), image: pendingB64 });
-    } else {
-      toast("Not connected to server", "err");
-      btnSave.disabled = false;
-      btnSave.textContent = "Save to library";
-    }
+    client.emit("save_face", { name: $("#face-name").value.trim(), image: pendingB64 });
   });
 
   // ---- CONTROLS ----
@@ -365,25 +365,12 @@
     }
   });
 
-  // ---- LYNCIO LIFECYCLE (Fixed Reconnection) ----
+  // ---- LYNCIO LIFECYCLE ----
   function initClient() {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     client = new LynkClient(`${proto}://${location.host}`);
 
-    client.on("open", () => {
-      console.log("[WS] Connected");
-      isConnected = true;
-      isConnecting = false;
-      clearTimeout(reconnectTimer);
-    });
-
-    client.on("close", () => {
-      console.log("[WS] Disconnected");
-      isConnected = false;
-      isConnecting = false;
-      if (!reconnectTimer) reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, 3000);
-    });
-
+    // The library parses JSON internally and passes only `data` to these handlers
     client.on("ready", (d) => {
       faces = d.faces || [];
       activeFace = d.active || null;
@@ -399,12 +386,22 @@
       $("#face-modal").classList.remove("open");
     });
 
-    client.on("face_changed", (d) => { activeFace = d.name; renderFaces(); toast(`Active: ${d.name}`, "ok"); });
-    client.on("face_deleted", (d) => { faces = d.faces || []; activeFace = d.active || null; renderFaces(); });
+    client.on("face_changed", (d) => { 
+      activeFace = d.name; 
+      renderFaces(); 
+      toast(`Active: ${d.name}`, "ok"); 
+    });
+
+    client.on("face_deleted", (d) => { 
+      faces = d.faces || []; 
+      activeFace = d.active || null; 
+      renderFaces(); 
+    });
     
     client.on("error", (msg) => {
       toast(String(msg), "err");
-      btnSave.disabled = false; btnSave.textContent = "Save to library";
+      btnSave.disabled = false; 
+      btnSave.textContent = "Save to library";
     });
 
     client.onBinaryEvent("out", (payload) => {
@@ -414,19 +411,19 @@
       output.src = url; output.style.display = "block"; stageEmpty.style.display = "none";
     });
 
-    connect();
+    // The library handles auto-reconnect internally. We just kick it off once.
+    client.connect().catch(err => {
+      console.warn("Initial connection failed, LynkClient will auto-retry:", err);
+    });
   }
 
-  async function connect() {
-    if (isConnected || isConnecting) return;
-    isConnecting = true;
-    try {
-      await client.connect();
-    } catch (e) {
-      isConnecting = false;
-      if (!reconnectTimer) reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, 3000);
-    }
-  }
+  // Monitor connection state for the UI indicator
+  setInterval(() => {
+    if (!client || !client.ws) return updateConnUI("disconnected");
+    if (client.ws.readyState === WebSocket.OPEN) updateConnUI("connected");
+    else if (client.ws.readyState === WebSocket.CONNECTING) updateConnUI("connecting");
+    else updateConnUI("disconnected");
+  }, 1000);
 
   // Boot
   initClient();
