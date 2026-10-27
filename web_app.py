@@ -61,8 +61,8 @@ except BaseException as e:
 # Tunables
 # ===========================================================================
 TARGET_FPS   = float(os.environ.get("TARGET_FPS", "5"))
-MAX_W        = int(os.environ.get("MAX_WIDTH",  "480"))
-MAX_H        = int(os.environ.get("MAX_HEIGHT", "360"))
+MAX_W        = int(os.environ.get("MAX_WIDTH",  "384")) # Reduced for Railway stability
+MAX_H        = int(os.environ.get("MAX_HEIGHT", "288"))
 JPEG_QUALITY = int(os.environ.get("JPEG_QUALITY", "75"))
 
 # ===========================================================================
@@ -71,6 +71,7 @@ JPEG_QUALITY = int(os.environ.get("JPEG_QUALITY", "75"))
 _active = {"face": None, "name": None}      
 _lock   = asyncio.Lock()                    
 _last   = {"jpeg": None}                    
+_last_warn = 0
 
 def _resize(frame):
     h, w = frame.shape[:2]
@@ -98,7 +99,6 @@ def _load_face(name: str):
     bgr = cv2.imread(str(path))
     if bgr is None: return False
     
-    # Keep source image high-res (up to 1080px) for accurate face detection
     h, w = bgr.shape[:2]
     if w > 1080:
         s = 1080 / w
@@ -116,6 +116,12 @@ def _load_face(name: str):
     _last["jpeg"] = None
     print(f"[DLC] SUCCESS: Loaded source face '{name}'", flush=True)
     return True
+
+# Helper to run heavy CPU inference without blocking async loop
+def _process_frame_sync(bgr, face):
+    for p in _processors:
+        bgr = p.process_frame(face, bgr)
+    return bgr
 
 # ===========================================================================
 # Lynkio app
@@ -168,7 +174,6 @@ async def ws_save_face(client, data):
         if bgr is None:
             return await client.send(json.dumps({"event": "error", "data": "Invalid image format"}))
         
-        # Save image at original resolution
         cv2.imwrite(str(ROOT / "faces" / f"{name}.jpg"), bgr)
         
         if not _load_face(name):
@@ -205,11 +210,13 @@ async def ws_delete_face(client, data):
 
 @app.on_binary_event("frame")
 async def ws_frame(client, payload: bytes):
+    global _last_warn
+    
     if _active["face"] is None:
-        # Throttled warning so logs don't flood
-        if time.time() - getattr(ws_frame, '_last_warn', 0) > 5:
+        now = time.time()
+        if now - _last_warn > 5:
             print("[DLC] WARN: Received frame but no face is selected", flush=True)
-            ws_frame._last_warn = time.time()
+            _last_warn = now
         await client.send_binary_event("out", payload)
         return
 
@@ -225,10 +232,11 @@ async def ws_frame(client, payload: bytes):
                 return
             
             bgr = _resize(bgr)
-            for p in _processors:
-                bgr = p.process_frame(_active["face"], bgr)
+            
+            # Run ONNX inference in a separate thread so it doesn't block the async loop!
+            out_bgr = await asyncio.to_thread(_process_frame_sync, bgr, _active["face"])
                 
-            out = _encode_jpeg(bgr)
+            out = _encode_jpeg(out_bgr)
             if out:
                 _last["jpeg"] = out
                 await client.send_binary_event("out", out)
