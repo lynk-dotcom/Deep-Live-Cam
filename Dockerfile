@@ -56,4 +56,4 @@ COPY . /app
 # Create models directory
 RUN mkdir -p /app/models
 EXPOSE 7860
-CMD ["python", "run.py"]
+CMD ["python", "web_app.py"]
